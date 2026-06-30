@@ -3233,17 +3233,6 @@ internal sealed class ModActions
             return;
         }
 
-        int claimableFixes = TryMakeStageBoxClaimable(boxType, stageBoxItemKey, out var preparedBox, out string claimableSummary);
-        if (claimableFixes <= 0 && !string.IsNullOrWhiteSpace(claimableSummary))
-        {
-            Plugin.FileLog($"Fast chest drops: no pude vencer timer local para itemKey={stageBoxItemKey}. {claimableSummary}");
-            return;
-        }
-        else if (claimableFixes > 0)
-        {
-            Plugin.FileLog($"Fast chest drops: preparado {claimableSummary}");
-        }
-
         int monsterKey = ReadIntArg(args, 0, 0);
         bool callbackSucceeded = false;
         bool callbackSeen = false;
@@ -3270,7 +3259,7 @@ internal sealed class ModActions
                 int afterRuntime = GetRuntimeBoxCount(boxType);
                 callbackSucceeded = true;
                 Interlocked.Increment(ref _fastChestDropForces);
-                Plugin.FileLog($"Fast chest drops: cofre NORMAL real creado itemKey={stageBoxItemKey}, callback={callbackValue}, monster={monsterKey}, runtime {runtimeNormal}->{afterRuntime}, timers {claimableFixes}, cooldown {cooldownUpdates}, eventos {eventUpdates}, UI {refreshes}, preparado [{DescribeBoxData(preparedBox)}].");
+                Plugin.FileLog($"Fast chest drops: cofre NORMAL solicitado por ruta real itemKey={stageBoxItemKey}, callback={callbackValue}, monster={monsterKey}, runtime {runtimeNormal}->{afterRuntime}, cooldown {cooldownUpdates}, eventos {eventUpdates}, UI {refreshes}. No se modifica claimableAt ni reward local.");
             }));
 
             if (!callbackSeen)
@@ -3645,10 +3634,6 @@ internal sealed class ModActions
             ulong uniqueId = willRemoveBoxData.BoxUniqueId;
             var box = TryFindStageBoxByUniqueId(uniqueId);
             Plugin.FileLog($"Fast chest open: type={boxType}, uid={uniqueId}, runtimeQty={GetRuntimeBoxQuantity(uniqueId)}, box=[{DescribeBoxData(box)}], item=[{DescribeRuntimeItem(itemCache)}].");
-            if (!IsValid(box))
-            {
-                RemoveDeadStageBoxRuntime(boxType, uniqueId, "open trace sin BoxData");
-            }
         }
         catch (Exception ex)
         {
@@ -3658,7 +3643,7 @@ internal sealed class ModActions
 
     internal static void TraceSteamChestConsume(ulong uniqueId, int itemId, long quantity, bool result)
     {
-        if (Plugin.IsShuttingDown || IsGameQuitting || !FastChestDropsEnabled || uniqueId == 0UL)
+        if (Plugin.IsShuttingDown || IsGameQuitting || uniqueId == 0UL)
         {
             return;
         }
@@ -3681,7 +3666,7 @@ internal sealed class ModActions
 
     internal static void TraceStageBoxClaimLookup(int itemKey, global::TaskbarHero.BoxData result)
     {
-        if (Plugin.IsShuttingDown || IsGameQuitting || !FastChestDropsEnabled)
+        if (Plugin.IsShuttingDown || IsGameQuitting)
         {
             return;
         }
@@ -3701,7 +3686,7 @@ internal sealed class ModActions
 
     internal static void TraceStageBoxAddItem(int itemKey, ulong uniqueId, int quantity, bool silent, global::TaskbarHero.AddItemResult result)
     {
-        if (Plugin.IsShuttingDown || IsGameQuitting || !FastChestDropsEnabled)
+        if (Plugin.IsShuttingDown || IsGameQuitting)
         {
             return;
         }
@@ -3720,6 +3705,45 @@ internal sealed class ModActions
         catch (Exception ex)
         {
             Plugin.FileLog("Fast chest add item trace failed: " + ex.Message);
+        }
+    }
+
+    internal static void TraceStageBoxExchangeResult(
+        global::TaskbarHero.EBoxType boxType,
+        global::uz.ty.WillRemoveBoxData willRemoveBoxData,
+        global::TaskbarHero.InventoryExchangeResult result)
+    {
+        if (Plugin.IsShuttingDown || IsGameQuitting || boxType != global::TaskbarHero.EBoxType.NORMAL)
+        {
+            return;
+        }
+
+        try
+        {
+            ulong uniqueId = willRemoveBoxData.BoxUniqueId;
+            var box = TryFindStageBoxByUniqueId(uniqueId);
+            Plugin.FileLog($"Fast chest exchange result: type={boxType}, uid={uniqueId}, success={SafeExchangeSuccess(result)}, error={SafeExchangeError(result)}, box=[{DescribeBoxData(box)}], added=[{DescribeExchangeAdded(result)}], removed=[{DescribeExchangeRemoved(result)}], invalid=[{DescribeExchangeInvalid(result)}].");
+        }
+        catch (Exception ex)
+        {
+            Plugin.FileLog("Fast chest exchange result trace failed: " + ex.Message);
+        }
+    }
+
+    internal static void TraceInventoryExchangeResult(global::TaskbarHero.InventoryExchangeResult result)
+    {
+        if (Plugin.IsShuttingDown || IsGameQuitting)
+        {
+            return;
+        }
+
+        try
+        {
+            Plugin.FileLog($"Fast chest inventory exchange callback: success={SafeExchangeSuccess(result)}, error={SafeExchangeError(result)}, added=[{DescribeExchangeAdded(result)}], removed=[{DescribeExchangeRemoved(result)}], invalid=[{DescribeExchangeInvalid(result)}].");
+        }
+        catch (Exception ex)
+        {
+            Plugin.FileLog("Fast chest inventory exchange callback trace failed: " + ex.Message);
         }
     }
 
@@ -3991,6 +4015,163 @@ internal sealed class ModActions
         catch (Exception ex)
         {
             return "error " + ex.Message;
+        }
+    }
+
+    private static string SafeExchangeSuccess(global::TaskbarHero.InventoryExchangeResult result)
+    {
+        if (!IsValid(result))
+        {
+            return "null";
+        }
+
+        try
+        {
+            return result.IsSuccess ? "1" : "0";
+        }
+        catch (Exception ex)
+        {
+            return "error:" + ex.Message;
+        }
+    }
+
+    private static string SafeExchangeError(global::TaskbarHero.InventoryExchangeResult result)
+    {
+        if (!IsValid(result))
+        {
+            return "null";
+        }
+
+        try
+        {
+            return result.Error ?? string.Empty;
+        }
+        catch (Exception ex)
+        {
+            return "error:" + ex.Message;
+        }
+    }
+
+    private static string DescribeExchangeAdded(global::TaskbarHero.InventoryExchangeResult result)
+    {
+        if (!IsValid(result) || result.added == null)
+        {
+            return "null";
+        }
+
+        try
+        {
+            var builder = new StringBuilder();
+            int count = result.added.Length;
+            int limit = Math.Min(count, 6);
+            for (int i = 0; i < limit; i++)
+            {
+                var item = result.added[i];
+                if (item == null)
+                {
+                    AppendShortSummary(builder, "null");
+                    continue;
+                }
+
+                string uniqueKey;
+                int itemId;
+                try
+                {
+                    uniqueKey = item.UniqueKey;
+                }
+                catch
+                {
+                    uniqueKey = item.itemKey;
+                }
+
+                try
+                {
+                    itemId = item.ItemID;
+                }
+                catch
+                {
+                    itemId = item.itemId;
+                }
+
+                AppendShortSummary(builder, itemId.ToString(CultureInfo.InvariantCulture) + ":" + uniqueKey);
+            }
+
+            if (count > limit)
+            {
+                AppendShortSummary(builder, "+" + (count - limit).ToString(CultureInfo.InvariantCulture));
+            }
+
+            return builder.Length == 0 ? "empty" : builder.ToString();
+        }
+        catch (Exception ex)
+        {
+            return "error:" + ex.Message;
+        }
+    }
+
+    private static string DescribeExchangeRemoved(global::TaskbarHero.InventoryExchangeResult result)
+    {
+        if (!IsValid(result) || result.removed == null)
+        {
+            return "null";
+        }
+
+        try
+        {
+            var builder = new StringBuilder();
+            int count = result.removed.Length;
+            int limit = Math.Min(count, 8);
+            for (int i = 0; i < limit; i++)
+            {
+                AppendShortSummary(builder, result.removed[i] ?? "null");
+            }
+
+            if (count > limit)
+            {
+                AppendShortSummary(builder, "+" + (count - limit).ToString(CultureInfo.InvariantCulture));
+            }
+
+            return builder.Length == 0 ? "empty" : builder.ToString();
+        }
+        catch (Exception ex)
+        {
+            return "error:" + ex.Message;
+        }
+    }
+
+    private static string DescribeExchangeInvalid(global::TaskbarHero.InventoryExchangeResult result)
+    {
+        if (!IsValid(result))
+        {
+            return "null";
+        }
+
+        try
+        {
+            var invalid = result.InvalidUniqueIds;
+            if (invalid == null)
+            {
+                return "null";
+            }
+
+            var builder = new StringBuilder();
+            int count = invalid.Length;
+            int limit = Math.Min(count, 8);
+            for (int i = 0; i < limit; i++)
+            {
+                AppendShortSummary(builder, invalid[i].ToString(CultureInfo.InvariantCulture));
+            }
+
+            if (count > limit)
+            {
+                AppendShortSummary(builder, "+" + (count - limit).ToString(CultureInfo.InvariantCulture));
+            }
+
+            return builder.Length == 0 ? "empty" : builder.ToString();
+        }
+        catch (Exception ex)
+        {
+            return "error:" + ex.Message;
         }
     }
 
@@ -9954,14 +10135,37 @@ internal static class TrainerFixedDeltaTimeSetterPatch
     }
 }
 
+[HarmonyPatch]
 internal static class TrainerStageBoxOpenTracePatch
 {
     private static IEnumerable<MethodBase> TargetMethods()
     {
-        yield break;
+        foreach (string name in new[] { "irs", "cqn", "dxb", "kml" })
+        {
+            var method = AccessTools.Method(
+                typeof(global::uz.tv),
+                name,
+                new[]
+                {
+                    typeof(global::TaskbarHero.EBoxType),
+                    typeof(Il2CppSystem.Action<global::TaskbarHero.BoxData>),
+                    typeof(global::uz.ty.WillRemoveBoxData),
+                    typeof(global::uz.uc.ua)
+                });
+
+            if (method != null)
+            {
+                Plugin.FileLog("Fast chest open trace patch target: " + method.FullDescription());
+                yield return method;
+            }
+            else
+            {
+                Plugin.FileLog("Fast chest open trace patch target not found: uz.tv." + name);
+            }
+        }
     }
 
-    private static void Prefix(global::TaskbarHero.EBoxType a, Action<global::TaskbarHero.BoxData> b, global::uz.ty.WillRemoveBoxData c, global::uz.uc.ua d)
+    private static void Prefix(global::TaskbarHero.EBoxType a, Il2CppSystem.Action<global::TaskbarHero.BoxData> b, global::uz.ty.WillRemoveBoxData c, global::uz.uc.ua d)
     {
         ModActions.TraceStageBoxOpen(a, c, d);
     }
@@ -9993,16 +10197,57 @@ internal static class TrainerStageBoxClaimLookupTracePatch
     }
 }
 
+[HarmonyPatch]
 internal static class TrainerStageBoxAddItemTracePatch
 {
     private static IEnumerable<MethodBase> TargetMethods()
     {
-        yield break;
+        var method = AccessTools.Method(
+            typeof(global::uz.uc),
+            "fzn",
+            new[] { typeof(int), typeof(ulong), typeof(int), typeof(bool) });
+
+        if (method != null)
+        {
+            Plugin.FileLog("Fast chest add item trace patch target: " + method.FullDescription());
+            yield return method;
+        }
+        else
+        {
+            Plugin.FileLog("Fast chest add item trace patch target not found: uz.uc.fzn");
+        }
     }
 
     private static void Postfix(int a, ulong b, int c, bool d, ref global::TaskbarHero.AddItemResult __result)
     {
         ModActions.TraceStageBoxAddItem(a, b, c, d, __result);
+    }
+}
+
+[HarmonyPatch]
+internal static class TrainerStageBoxExchangeResultTracePatch
+{
+    private static IEnumerable<MethodBase> TargetMethods()
+    {
+        foreach (var method in AccessTools.GetDeclaredMethods(typeof(global::uz.tv)))
+        {
+            if (method == null || method.ReturnType != typeof(void))
+            {
+                continue;
+            }
+
+            var parameters = method.GetParameters();
+            if (parameters.Length == 1 && parameters[0].ParameterType == typeof(global::TaskbarHero.InventoryExchangeResult))
+            {
+                Plugin.FileLog("Fast chest exchange result trace patch target: " + method.FullDescription());
+                yield return method;
+            }
+        }
+    }
+
+    private static void Prefix(global::TaskbarHero.InventoryExchangeResult a)
+    {
+        ModActions.TraceInventoryExchangeResult(a);
     }
 }
 
