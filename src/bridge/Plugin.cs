@@ -366,6 +366,7 @@ internal sealed class ModActions
             "FAST_CHESTS_ON" => SetFastChestDrops(true),
             "FAST_CHESTS_OFF" => SetFastChestDrops(false),
             "CHEST_DROP_DIAG" => BuildChestDropBoostDiagnostics(),
+            "CHESTS_PRUNE_STALE" => PruneStaleSaveChests(),
             "FIX_EQUIPPED_DUPES" => FixEquippedItemDuplicates(),
             "REPAIR_EQUIPPED_DUPES" => RepairEquippedItemDuplicates(),
             "RESTORE_HEROES" => RestorePersistentHeroes(),
@@ -426,11 +427,17 @@ internal sealed class ModActions
                 int petCount = save?.PetSaveData?.Count ?? 0;
                 int petUnlocked = CountUnlockedPets(save);
                 int heroCatalogCount = GetDataManager()?.heroInfoData?.Count ?? 0;
+                int cleanedDeadRuntime = RemoveDeadStageBoxRuntimeEntries(global::TaskbarHero.EBoxType.NORMAL, "refresh") +
+                                         RemoveDeadStageBoxRuntimeEntries(global::TaskbarHero.EBoxType.BOSS, "refresh") +
+                                         RemoveDeadStageBoxRuntimeEntries(global::TaskbarHero.EBoxType.ACTBOSS, "refresh");
                 string heroLevels = BuildHeroLevelSummary(save);
                 string boxSummary = BuildBoxSummary(save);
+                string cleanupSummary = cleanedDeadRuntime > 0
+                    ? $", cofres runtime huerfanos limpiados {cleanedDeadRuntime}"
+                    : string.Empty;
                 string status = manager == null
                     ? "Save manager no listo. Entra en partida y pulsa Refresh."
-                    : $"Runtime listo. Monedas {currencyCount}, heroes save {heroCount}/catalogo {heroCatalogCount} [{heroLevels}], inv {inventoryUnlocked}/{inventoryCount} ({inventoryEmpty} libres), alijo {stashUnlocked}/{stashCount}, items {itemCount}, mascotas {petUnlocked}/{petCount}, {boxSummary}, hero bypass {(ForceHeroUnlockChecks ? "ON" : "OFF")}, chest boost {(_fastChestDropsEnabled ? "ON" : "OFF")}.";
+                    : $"Runtime listo. Monedas {currencyCount}, heroes save {heroCount}/catalogo {heroCatalogCount} [{heroLevels}], inv {inventoryUnlocked}/{inventoryCount} ({inventoryEmpty} libres), alijo {stashUnlocked}/{stashCount}, items {itemCount}, mascotas {petUnlocked}/{petCount}, {boxSummary}{cleanupSummary}, hero bypass {(ForceHeroUnlockChecks ? "ON" : "OFF")}, chest boost {(_fastChestDropsEnabled ? "ON" : "OFF")}.";
                 Plugin.FileLog(status);
                 return status;
             }
@@ -532,8 +539,10 @@ internal sealed class ModActions
                     _fastChestDropsEnabled = true;
                     FastChestDropsEnabled = true;
                     FastChestStatBoostEnabled = true;
+                    int cleanedDead = RemoveDeadStageBoxRuntimeEntries(global::TaskbarHero.EBoxType.NORMAL, "al activar chest boost") +
+                                      RemoveDeadStageBoxRuntimeEntries(global::TaskbarHero.EBoxType.BOSS, "al activar chest boost");
                     string status = ApplyChestDropAccountStatusBoost(true);
-                    status += $" Bonus de runas/cofres se sincroniza en hilo Unity durante StageManager.ihu; cooldown NORMAL objetivo {FastChestDropIntervalSeconds}s via StageManager.bdlr/unscaledTime; peticion de cofre por flujo de stage del juego; probabilidad de entrada NORMAL {FastChestDropChanceInput.ToString("0", CultureInfo.InvariantCulture)}%; sin crear cofres ni rewards locales falsos.";
+                    status += $" Bonus de runas/cofres se sincroniza en hilo Unity durante StageManager.ihu; cooldown NORMAL objetivo {FastChestDropIntervalSeconds}s via StageManager.bdlr/unscaledTime; probabilidad de entrada NORMAL {FastChestDropChanceInput.ToString("0", CultureInfo.InvariantCulture)}%; sin forzar ihv/iuf ni llamar izd directo; cofres runtime huerfanos limpiados {cleanedDead}.";
                     Plugin.FileLog(status);
                     return status;
                 }
@@ -2869,6 +2878,12 @@ internal sealed class ModActions
             return;
         }
 
+        int cleanedDead = RemoveDeadStageBoxRuntimeEntries(boxType, "antes de StageManager.ihu original");
+        if (cleanedDead > 0)
+        {
+            Plugin.FileLog($"Fast chest drops: limpiados {cleanedDead} cofres runtime sin BoxData antes de StageManager.ihu original.");
+        }
+
         int runtimeCount = GetRuntimeBoxCount(boxType);
         if (runtimeCount >= FastChestMaxNormalChests)
         {
@@ -3175,24 +3190,17 @@ internal sealed class ModActions
 
         if (result)
         {
+            int observations = Interlocked.Increment(ref _fastChestChanceResultObservations);
+            if (observations <= 10 || observations % 50 == 0)
+            {
+                Plugin.FileLog($"Fast chest drops: StageManager.ihv permitio drop original {boxType}; runtime={GetRuntimeBoxCount(boxType)}.");
+            }
+
             return;
         }
 
-        if (!TryClaimFastChestWindow())
-        {
-            return;
-        }
-
-        int runtimeCount = GetRuntimeBoxCount(boxType);
-        if (runtimeCount >= FastChestMaxNormalChests)
-        {
-            Plugin.FileLog($"Fast chest drops: saltado, ya hay {runtimeCount} cofres {boxType} en runtime.");
-            return;
-        }
-
-        result = true;
-        Interlocked.Increment(ref _fastChestDropForces);
-        Plugin.FileLog($"Fast chest drops: StageManager.ihv permitio drop real {boxType}; runtime antes={runtimeCount}, siguiente ventana {FastChestDropIntervalSeconds}s.");
+        // Do not force ihv=true. That creates runtime STAGEBOX entries without
+        // matching BoxData/reward metadata, so they cannot be opened correctly.
     }
 
     internal static void TryForceFastChestDropFromStage(global::TaskbarHero.StageManager stageManager, object[] args)
@@ -3214,6 +3222,12 @@ internal sealed class ModActions
         }
 
         var boxType = global::TaskbarHero.EBoxType.NORMAL;
+        int cleanedDead = RemoveDeadStageBoxRuntimeEntries(boxType, "antes de solicitar fast chest");
+        if (cleanedDead > 0)
+        {
+            Plugin.FileLog($"Fast chest drops: limpiados {cleanedDead} cofres runtime sin BoxData antes de pedir nuevo cofre.");
+        }
+
         int runtimeNormal = GetRuntimeBoxCount(global::TaskbarHero.EBoxType.NORMAL);
         if (runtimeNormal >= FastChestMaxNormalChests)
         {
@@ -3634,6 +3648,10 @@ internal sealed class ModActions
             ulong uniqueId = willRemoveBoxData.BoxUniqueId;
             var box = TryFindStageBoxByUniqueId(uniqueId);
             Plugin.FileLog($"Fast chest open: type={boxType}, uid={uniqueId}, runtimeQty={GetRuntimeBoxQuantity(uniqueId)}, box=[{DescribeBoxData(box)}], item=[{DescribeRuntimeItem(itemCache)}].");
+            if (!IsValid(box) && GetRuntimeBoxQuantity(uniqueId) > 0)
+            {
+                RemoveDeadStageBoxRuntime(boxType, uniqueId, "open trace sin BoxData");
+            }
         }
         catch (Exception ex)
         {
@@ -3979,6 +3997,47 @@ internal sealed class ModActions
         catch (Exception ex)
         {
             Plugin.FileLog($"RemoveDeadStageBoxRuntime failed uid={uniqueId}: {ex.Message}");
+            return 0;
+        }
+    }
+
+    private static int RemoveDeadStageBoxRuntimeEntries(global::TaskbarHero.EBoxType boxType, string reason)
+    {
+        try
+        {
+            var store = global::uz.ty.bshg;
+            if (store == null || !store.TryGetValue(boxType, out var perType) || perType == null)
+            {
+                return 0;
+            }
+
+            var deadIds = new List<ulong>();
+            foreach (var entry in perType)
+            {
+                ulong uniqueId = entry.Key;
+                int quantity = entry.Value;
+                if (uniqueId == 0UL || quantity <= 0)
+                {
+                    continue;
+                }
+
+                if (!IsValid(TryFindStageBoxByUniqueId(uniqueId)))
+                {
+                    deadIds.Add(uniqueId);
+                }
+            }
+
+            int removed = 0;
+            for (int i = 0; i < deadIds.Count; i++)
+            {
+                removed += RemoveDeadStageBoxRuntime(boxType, deadIds[i], reason);
+            }
+
+            return removed;
+        }
+        catch (Exception ex)
+        {
+            Plugin.FileLog($"RemoveDeadStageBoxRuntimeEntries failed {boxType}: {ex.Message}");
             return 0;
         }
     }
@@ -4339,10 +4398,8 @@ internal sealed class ModActions
         {
             if (!result)
             {
-                Plugin.FileLog($"Fast chest drops: uz.ty.iuf permitira {boxType}; runtime={runtimeCount}, limite={FastChestMaxNormalChests}.");
+                Plugin.FileLog($"Fast chest drops: uz.ty.iuf no permite {boxType}; no se fuerza para evitar cofres sin BoxData. runtime={runtimeCount}, limite trainer={FastChestMaxNormalChests}.");
             }
-
-            result = true;
         }
     }
 
@@ -10070,7 +10127,6 @@ internal static class TrainerFastStageChestDropPatch
         ModActions.ReapplyGameSpeedIfNeeded("StageManager.ihu prefix");
         ModActions.SyncFastChestAccountStatusOnMainThread();
         ModActions.PrepareFastChestDropBeforeStageDrop(__instance, a, b, e, ref c, ref d);
-        ModActions.TryForceFastChestDropFromStage(__instance, new object[] { a, b, c, d, e });
     }
 }
 
