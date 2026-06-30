@@ -206,11 +206,12 @@ internal sealed class ModActions
     private const float GameSpeedEpsilon = 0.001f;
     private const int ManualChestAddAmount = 25;
     private const int FastChestDropIntervalSeconds = 10;
-    private const int FastChestChanceTarget = 10_000;
+    private const int FastChestChanceTarget = 100_000_000;
     private const int FastChestChancePercentTarget = 10_000;
     private const int FastChestMaxNormalChests = 99;
     private const int FastChestStatusBoostSource = 941414;
     private const float FastChestCooldownExpireSlackSeconds = 0.25f;
+    private const float FastChestDropChanceInput = 100f;
     private const string PreferredHeroFormationFileName = "preferred_hero_formation.txt";
 
     private static readonly string[] SharedClassGearTypes =
@@ -235,20 +236,29 @@ internal sealed class ModActions
     private static readonly HashSet<ulong> SessionChestIds = new();
     private static readonly object ChestStatusBoostSync = new();
     private static readonly object FastChestCooldownSync = new();
-    private static readonly Dictionary<global::TaskbarHero.StatusSystem.EAccountStatus, int> ChestStatusOriginals = new();
     private static readonly Lazy<MethodInfo> StageManagerSetBoxCooldownMethod = new(() => AccessTools.Method(typeof(global::TaskbarHero.StageManager), "ihw"));
+    private static readonly Lazy<MethodInfo> StageManagerBoxCooldownsGetter = new(ResolveStageManagerBoxCooldownsGetter);
     private static readonly Lazy<FieldInfo> StageManagerBoxCooldownsField = new(ResolveStageManagerBoxCooldownsField);
     private static readonly Lazy<MethodInfo> StageBoxManagerMethod = new(() => AccessTools.Method(typeof(global::wk), "jxg") ?? AccessTools.PropertyGetter(typeof(global::wk), "bsqk"));
     private static readonly Lazy<MethodInfo> StageBoxFindByUniqueIdMethod = new(() => AccessTools.Method(typeof(global::vy), "jvk"));
     private static readonly Lazy<MethodInfo> AccountStatusManagerGetterMethod = new(() => AccessTools.PropertyGetter(typeof(global::yw), "bfpw") ?? AccessTools.Method(typeof(global::yw), "knu"));
     private static int _accountStatusLookupLogCount;
     private static long _nextFastChestDropUtcTicks;
+    private static long _nextFastChestStatusSyncUtcTicks;
     private readonly object _sync = new();
     private bool _fastChestDropsEnabled;
     private static int _fastChestDropForces;
     private static int _fastChestCooldownExpirations;
     private static int _fastChestCooldownUpdates;
+    private static int _fastChestChanceInputUpdates;
+    private static int _fastChestStageBoxKeyFixes;
+    private static int _fastChestStatusMainThreadUpdates;
+    private static int _fastChestNoStageBoxKeySkips;
+    private static int _fastChestEligibleStageBoxAttempts;
+    private static int _fastChestChanceResultObservations;
+    private static int _fastChestRequestObservations;
     private static float _nextFastChestCooldownUnscaled;
+    private static volatile bool _fastChestStatusContributionApplied;
     private static float _desiredGameSpeed = 1f;
     private static long _lastGameSpeedReapplyLogTick;
 
@@ -324,32 +334,12 @@ internal sealed class ModActions
             return SocketEquippedClassGems(classType);
         }
 
-        if (normalized.StartsWith("CRAFT_MATS:", StringComparison.Ordinal))
-        {
-            string raw = command.Substring("CRAFT_MATS:".Length).Trim();
-            string[] parts = raw.Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            string rawType = parts.Length > 0 ? parts[0] : string.Empty;
-            int requestedTier = parts.Length > 1 && int.TryParse(parts[1], out int tier) ? tier : 0;
-            return AddCraftingMaterials(rawType, requestedTier);
-        }
-
         if (normalized.StartsWith("GAME_SPEED:", StringComparison.Ordinal))
         {
             string rawSpeed = command.Substring("GAME_SPEED:".Length).Trim();
             return TryParseSpeed(rawSpeed, out float speed)
                 ? SetGameSpeed(speed)
                 : $"Velocidad invalida: {rawSpeed}";
-        }
-
-        if (normalized.StartsWith("CHESTS_ADD:", StringComparison.Ordinal))
-        {
-            return ChestRewardsDisabledMessage();
-        }
-
-        if (normalized.StartsWith("CHEST_TIMER:", StringComparison.Ordinal))
-        {
-            string state = normalized.Substring("CHEST_TIMER:".Length);
-            return SetFastChestDrops(state == "ON" || state == "TRUE" || state == "1");
         }
 
         if (normalized.StartsWith("FAST_CHESTS:", StringComparison.Ordinal))
@@ -373,12 +363,9 @@ internal sealed class ModActions
             "RESTORE_WINDOW" => "RESTORE_WINDOW desactivado: el trainer ya no modifica tamano ni posicion de la ventana.",
             "CURRENCIES" => SetAllCurrencies(),
             "HEROES" => SetAllHeroes(),
-            "CHESTS_ADD_NORMAL" => ChestRewardsDisabledMessage(),
-            "CHESTS_PRUNE_STALE" => PruneStaleSaveChests(),
-            "CHEST_TIMER_ON" => SetFastChestDrops(true),
-            "CHEST_TIMER_OFF" => SetFastChestDrops(false),
             "FAST_CHESTS_ON" => SetFastChestDrops(true),
             "FAST_CHESTS_OFF" => SetFastChestDrops(false),
+            "CHEST_DROP_DIAG" => BuildChestDropBoostDiagnostics(),
             "FIX_EQUIPPED_DUPES" => FixEquippedItemDuplicates(),
             "REPAIR_EQUIPPED_DUPES" => RepairEquippedItemDuplicates(),
             "RESTORE_HEROES" => RestorePersistentHeroes(),
@@ -387,10 +374,7 @@ internal sealed class ModActions
             "SKILL_POINTS_999" => SetHeroAbilityPoints(999),
             "UNLOCK_SLOTS" => UnlockInventoryAndStash(),
             "LIST_ITEM_KEYS" => ListKnownItemKeys(),
-            "LIST_CRAFTING_RECIPES" => ListCraftingRecipes(),
             "LIST_BEST_GEAR" => ListBestClassGearSets(),
-            "CRAFT_MATS_SUBWEAPON" => AddCraftingMaterials("SubWeapon", 0),
-            "CLEAN_CRAFT_MATS" => CleanLocalCraftingMaterials(),
             "GEM_PACK" => "Usa SOCKET_EQUIPPED_GEMS:Knight/Ranger/Sorcerer/Priest/Hunter/Slayer.",
             "BEST_GEAR_KNIGHT" => AddBestClassGearSet("Knight"),
             "BEST_GEAR_RANGER" => AddBestClassGearSet("Ranger"),
@@ -537,19 +521,26 @@ internal sealed class ModActions
                     _fastChestDropForces = 0;
                     _fastChestCooldownExpirations = 0;
                     _fastChestCooldownUpdates = 0;
+                    _fastChestChanceInputUpdates = 0;
+                    _fastChestStageBoxKeyFixes = 0;
+                    _fastChestStatusMainThreadUpdates = 0;
+                    _fastChestNoStageBoxKeySkips = 0;
+                    _fastChestEligibleStageBoxAttempts = 0;
+                    _fastChestChanceResultObservations = 0;
+                    _fastChestRequestObservations = 0;
                     ResetFastChestCooldownWindow();
                     _fastChestDropsEnabled = true;
                     FastChestDropsEnabled = true;
                     FastChestStatBoostEnabled = true;
                     string status = ApplyChestDropAccountStatusBoost(true);
-                    status += $" Cooldown NORMAL objetivo {FastChestDropIntervalSeconds}s via StageManager.bdlr; flujo original del juego, sin crear cofres ni rewards locales.";
+                    status += $" Bonus de runas/cofres se sincroniza en hilo Unity durante StageManager.ihu; cooldown NORMAL objetivo {FastChestDropIntervalSeconds}s via StageManager.bdlr; probabilidad de entrada NORMAL {FastChestDropChanceInput.ToString("0", CultureInfo.InvariantCulture)}%; flujo original del juego, sin crear cofres ni rewards locales.";
                     Plugin.FileLog(status);
                     return status;
                 }
 
                 string restoreStatus = ApplyChestDropAccountStatusBoost(false);
                 StopChestTimerLocked();
-                string stopped = $"Chest drop boost OFF. {restoreStatus} Cooldowns acelerados: expirados {_fastChestCooldownExpirations}, fijados {_fastChestCooldownUpdates}. Forced reward path apagado; cofres forzados {_fastChestDropForces}.";
+                string stopped = $"Chest drop boost OFF. {restoreStatus} Cooldowns acelerados: expirados {_fastChestCooldownExpirations}, fijados {_fastChestCooldownUpdates}; probabilidad subida {_fastChestChanceInputUpdates}; chance obs {_fastChestChanceResultObservations}; requests obs {_fastChestRequestObservations}; status sync {_fastChestStatusMainThreadUpdates}; stagebox key elegibles {_fastChestEligibleStageBoxAttempts}, sin key {_fastChestNoStageBoxKeySkips}, rellenados legacy {_fastChestStageBoxKeyFixes}. Forced reward path apagado; cofres forzados {_fastChestDropForces}.";
                 Plugin.FileLog(stopped);
                 return stopped;
             }
@@ -572,63 +563,112 @@ internal sealed class ModActions
             var accountStatusManager = GetRuntimeAccountStatusManager(out string lookupDetail);
             if (!IsValid(accountStatusManager))
             {
-                return "Chest drop boost no aplicado: AccountStatus aun no esta listo. " + lookupDetail + " Entra en partida y pulsa Refresh antes de activarlo.";
+                return "AccountStatus aun no esta listo para diagnostico. " + lookupDetail + " ";
             }
 
             var targets = new (global::TaskbarHero.StatusSystem.EAccountStatus Status, int Minimum)[]
             {
                 (global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceNormalChest, FastChestChanceTarget),
                 (global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceNormalChestPercent, FastChestChancePercentTarget),
-                (global::TaskbarHero.StatusSystem.EAccountStatus.MaxAmountNormalChest, FastChestMaxNormalChests)
+                (global::TaskbarHero.StatusSystem.EAccountStatus.MaxAmountNormalChest, FastChestMaxNormalChests),
+                (global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceStageBossChest, FastChestChanceTarget),
+                (global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceStageBossChestPercent, FastChestChancePercentTarget),
+                (global::TaskbarHero.StatusSystem.EAccountStatus.MaxAmountStageBossChest, FastChestMaxNormalChests)
             };
 
             lock (ChestStatusBoostSync)
             {
-                int changed = 0;
                 var details = new StringBuilder();
                 foreach (var target in targets)
                 {
                     int before = ReadAccountStatus(accountStatusManager, target.Status);
-                    if (enabled)
+                    details.Append(target.Status).Append('=').Append(before);
+                    if (before < target.Minimum)
                     {
-                        if (!ChestStatusOriginals.ContainsKey(target.Status))
-                        {
-                            ChestStatusOriginals[target.Status] = before;
-                        }
-
-                        int contribution = Math.Max(0, target.Minimum - before);
-                        if (contribution > 0)
-                        {
-                            SetAccountStatusContribution(accountStatusManager, target.Status, contribution);
-                            changed++;
-                        }
-
-                        int after = ReadAccountStatus(accountStatusManager, target.Status);
-                        details.Append(target.Status).Append(' ').Append(before).Append("->").Append(after).Append("; ");
+                        details.Append(" (<").Append(target.Minimum).Append(')');
                     }
-                    else if (ChestStatusOriginals.TryGetValue(target.Status, out int original))
-                    {
-                        SetAccountStatusContribution(accountStatusManager, target.Status, 0);
-                        changed++;
 
-                        int after = ReadAccountStatus(accountStatusManager, target.Status);
-                        details.Append(target.Status).Append(' ').Append(before).Append("->").Append(after).Append(" original ").Append(original).Append("; ");
-                    }
+                    details.Append("; ");
                 }
 
-                if (!enabled)
-                {
-                    ChestStatusOriginals.Clear();
-                }
-
-                string mode = enabled ? "ON" : "restore";
-                return $"Chest drop boost {mode}: stats cuenta cambiados {changed}. {details}Source {FastChestStatusBoostSource}. No crea cofres, no fuerza rewardUid y no toca claimableAt.";
+                string mode = enabled ? "ON" : "OFF";
+                return $"Chest drop boost {mode}: stats cuenta leidos {details}La mutacion AccountStatus se difiere al hilo Unity para evitar crash IL2CPP. ";
             }
         }
         catch (Exception ex)
         {
             return Fail("Chest drop boost runtime", ex);
         }
+    }
+
+    public string BuildChestDropBoostDiagnostics()
+    {
+        lock (_sync)
+        {
+            try
+            {
+                var details = new StringBuilder();
+                details.Append("Chest boost diag: flag ")
+                    .Append(FastChestDropsEnabled ? "ON" : "OFF")
+                    .Append("; interval ").Append(FastChestDropIntervalSeconds).Append("s; ");
+
+                var accountStatusManager = GetRuntimeAccountStatusManager(out string lookupDetail);
+                if (IsValid(accountStatusManager))
+                {
+                    AppendChestStatusDiagnostic(details, accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceNormalChest);
+                    AppendChestStatusDiagnostic(details, accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceNormalChestPercent);
+                    AppendChestStatusDiagnostic(details, accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.MaxAmountNormalChest);
+                    AppendChestStatusDiagnostic(details, accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceStageBossChest);
+                    AppendChestStatusDiagnostic(details, accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceStageBossChestPercent);
+                    AppendChestStatusDiagnostic(details, accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.MaxAmountStageBossChest);
+                }
+                else
+                {
+                    details.Append("AccountStatus no listo: ").Append(lookupDetail);
+                }
+
+                var stageManager = GetStageManager();
+                if (IsValid(stageManager))
+                {
+                    if (TryReadStageBoxCooldownValue(stageManager, global::TaskbarHero.EBoxType.NORMAL, out float value, out string cooldownDetail))
+                    {
+                        details.Append("bdlr NORMAL=")
+                            .Append(value.ToString("0.00", CultureInfo.InvariantCulture))
+                            .Append(", now=")
+                            .Append(GetStageBoxCooldownClock().ToString("0.00", CultureInfo.InvariantCulture))
+                            .Append("; ");
+                    }
+                    else
+                    {
+                        details.Append("bdlr no legible: ").Append(cooldownDetail).Append("; ");
+                    }
+                }
+                else
+                {
+                    details.Append("StageManager no listo; ");
+                }
+
+                details.Append("runtime NORMAL ").Append(GetRuntimeBoxCount(global::TaskbarHero.EBoxType.NORMAL))
+                    .Append(", BOSS ").Append(GetRuntimeBoxCount(global::TaskbarHero.EBoxType.BOSS))
+                    .Append("; stagebox elegibles ").Append(_fastChestEligibleStageBoxAttempts)
+                    .Append(", sin key ").Append(_fastChestNoStageBoxKeySkips)
+                    .Append("; chance obs ").Append(_fastChestChanceResultObservations)
+                    .Append(", request obs ").Append(_fastChestRequestObservations)
+                    .Append(".");
+                string status = details.ToString();
+                Plugin.FileLog(status);
+                return status;
+            }
+            catch (Exception ex)
+            {
+                return Fail("Chest boost diag fallo", ex);
+            }
+        }
+    }
+
+    private static void AppendChestStatusDiagnostic(StringBuilder details, global::yw accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus status)
+    {
+        details.Append(status).Append('=').Append(ReadAccountStatus(accountStatusManager, status)).Append("; ");
     }
 
     public string PruneStaleSaveChests()
@@ -2696,30 +2736,165 @@ internal sealed class ModActions
         }
 
         Interlocked.Exchange(ref _nextFastChestDropUtcTicks, 0);
+        Interlocked.Exchange(ref _nextFastChestStatusSyncUtcTicks, 0);
     }
 
-    internal static void PrepareFastChestCooldownBeforeStageDrop(global::TaskbarHero.StageManager stageManager, object[] args)
+    internal static void SyncFastChestAccountStatusOnMainThread()
     {
-        if (Plugin.IsShuttingDown || IsGameQuitting || !FastChestDropsEnabled || !IsValid(stageManager) || args == null || args.Length < 5)
+        if (Plugin.IsShuttingDown || IsGameQuitting)
         {
             return;
         }
 
-        int monsterType = ReadIntArg(args, 4, 0);
-        if (monsterType != 0)
+        bool shouldApply = FastChestStatBoostEnabled;
+        if (!shouldApply && !_fastChestStatusContributionApplied)
         {
             return;
         }
 
-        int runtimeNormal = GetRuntimeBoxCount(global::TaskbarHero.EBoxType.NORMAL);
-        if (runtimeNormal >= FastChestMaxNormalChests)
+        long now = DateTime.UtcNow.Ticks;
+        long next = Interlocked.Read(ref _nextFastChestStatusSyncUtcTicks);
+        if (shouldApply && _fastChestStatusContributionApplied && now < next)
         {
             return;
         }
 
         try
         {
-            float now = global::UnityEngine.Time.unscaledTime;
+            var accountStatusManager = GetRuntimeAccountStatusManager(out string lookupDetail);
+            if (!IsValid(accountStatusManager))
+            {
+                if (shouldApply)
+                {
+                    Plugin.FileLog("Fast chest status: AccountStatus no listo en hilo Unity. " + lookupDetail);
+                }
+
+                Interlocked.Exchange(ref _nextFastChestStatusSyncUtcTicks, DateTime.UtcNow.AddSeconds(2).Ticks);
+                return;
+            }
+
+            if (shouldApply)
+            {
+                int changed = 0;
+                var details = new StringBuilder();
+                changed += SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceNormalChest, FastChestChanceTarget, details);
+                changed += SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceNormalChestPercent, FastChestChancePercentTarget, details);
+                changed += SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.MaxAmountNormalChest, FastChestMaxNormalChests, details);
+                changed += SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceStageBossChest, FastChestChanceTarget, details);
+                changed += SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceStageBossChestPercent, FastChestChancePercentTarget, details);
+                changed += SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.MaxAmountStageBossChest, FastChestMaxNormalChests, details);
+
+                _fastChestStatusContributionApplied = true;
+                Interlocked.Exchange(ref _nextFastChestStatusSyncUtcTicks, DateTime.UtcNow.AddSeconds(10).Ticks);
+                int updates = Interlocked.Increment(ref _fastChestStatusMainThreadUpdates);
+                if (changed > 0 || updates <= 3 || updates % 12 == 0)
+                {
+                    Plugin.FileLog($"Fast chest status: aplicado en hilo Unity, cambios={changed}; {details}");
+                }
+
+                return;
+            }
+
+            var clearDetails = new StringBuilder();
+            SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceNormalChest, 0, clearDetails);
+            SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceNormalChestPercent, 0, clearDetails);
+            SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.MaxAmountNormalChest, 0, clearDetails);
+            SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceStageBossChest, 0, clearDetails);
+            SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceStageBossChestPercent, 0, clearDetails);
+            SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.MaxAmountStageBossChest, 0, clearDetails);
+            _fastChestStatusContributionApplied = false;
+            Interlocked.Exchange(ref _nextFastChestStatusSyncUtcTicks, 0);
+            Plugin.FileLog("Fast chest status: contribuciones retiradas en hilo Unity; " + clearDetails);
+        }
+        catch (Exception ex)
+        {
+            Interlocked.Exchange(ref _nextFastChestStatusSyncUtcTicks, DateTime.UtcNow.AddSeconds(2).Ticks);
+            Plugin.FileLog("Fast chest status: sync fallo en hilo Unity: " + ex.Message);
+        }
+    }
+
+    private static int SetFastChestAccountStatusContribution(
+        global::yw accountStatusManager,
+        global::TaskbarHero.StatusSystem.EAccountStatus status,
+        int value,
+        StringBuilder details)
+    {
+        int before = ReadAccountStatus(accountStatusManager, status);
+        SetAccountStatusContribution(accountStatusManager, status, value);
+        int after = ReadAccountStatus(accountStatusManager, status);
+        if (details != null)
+        {
+            details.Append(status)
+                .Append(' ')
+                .Append(before)
+                .Append("->")
+                .Append(after)
+                .Append("; ");
+        }
+
+        return before == after ? 0 : 1;
+    }
+
+    internal static void PrepareFastChestDropBeforeStageDrop(
+        global::TaskbarHero.StageManager stageManager,
+        int monsterKey,
+        global::TaskbarHero.Data.EStageType stageType,
+        global::TaskbarHero.Data.EMonsterType monsterType,
+        ref int stageBoxItemKey,
+        ref float dropChanceInput)
+    {
+        if (Plugin.IsShuttingDown || IsGameQuitting || !FastChestDropsEnabled || !IsValid(stageManager))
+        {
+            return;
+        }
+
+        if (monsterType != global::TaskbarHero.Data.EMonsterType.MONSTER &&
+            monsterType != global::TaskbarHero.Data.EMonsterType.BOSS)
+        {
+            return;
+        }
+
+        var boxType = monsterType == global::TaskbarHero.Data.EMonsterType.BOSS
+            ? global::TaskbarHero.EBoxType.BOSS
+            : global::TaskbarHero.EBoxType.NORMAL;
+
+        if (stageBoxItemKey <= 0)
+        {
+            int skips = Interlocked.Increment(ref _fastChestNoStageBoxKeySkips);
+            if (skips <= 5 || skips % 50 == 0)
+            {
+                Plugin.FileLog($"Fast chest drops: skip sin stageBoxItemKey real stage={stageType}, monsterType={monsterType}, monster={monsterKey}.");
+            }
+
+            return;
+        }
+
+        int runtimeCount = GetRuntimeBoxCount(boxType);
+        if (runtimeCount >= FastChestMaxNormalChests)
+        {
+            return;
+        }
+
+        int eligible = Interlocked.Increment(ref _fastChestEligibleStageBoxAttempts);
+        if (eligible <= 5 || eligible % 25 == 0)
+        {
+            Plugin.FileLog($"Fast chest drops: elegible {boxType} itemKey={stageBoxItemKey}, stage={stageType}, monsterType={monsterType}, monster={monsterKey}, runtime={runtimeCount}.");
+        }
+
+        if (dropChanceInput < FastChestDropChanceInput)
+        {
+            float before = dropChanceInput;
+            dropChanceInput = FastChestDropChanceInput;
+            int updates = Interlocked.Increment(ref _fastChestChanceInputUpdates);
+            if (updates <= 5 || updates % 25 == 0)
+            {
+                Plugin.FileLog($"Fast chest drops: StageManager.ihu drop chance input {before.ToString("0.###", CultureInfo.InvariantCulture)}->{dropChanceInput.ToString("0.###", CultureInfo.InvariantCulture)}.");
+            }
+        }
+
+        try
+        {
+            float now = GetStageBoxCooldownClock();
             lock (FastChestCooldownSync)
             {
                 if (_nextFastChestCooldownUnscaled > 0f && now + 0.05f < _nextFastChestCooldownUnscaled)
@@ -2728,9 +2903,9 @@ internal sealed class ModActions
                 }
 
                 float expiredAt = now - FastChestCooldownExpireSlackSeconds;
-                if (!TrySetStageBoxCooldownValue(stageManager, global::TaskbarHero.EBoxType.NORMAL, expiredAt, out string detail))
+                if (!TrySetStageBoxCooldownValue(stageManager, boxType, expiredAt, out string detail))
                 {
-                    Plugin.FileLog("Fast chest cooldown: no pude expirar bdlr NORMAL antes de StageManager.ihu: " + detail);
+                    Plugin.FileLog($"Fast chest cooldown: no pude expirar bdlr {boxType} antes de StageManager.ihu: " + detail);
                     _nextFastChestCooldownUnscaled = now + 2f;
                     return;
                 }
@@ -2739,32 +2914,32 @@ internal sealed class ModActions
                 int expirations = Interlocked.Increment(ref _fastChestCooldownExpirations);
                 if (expirations <= 5 || expirations % 25 == 0)
                 {
-                    Plugin.FileLog($"Fast chest cooldown: bdlr NORMAL vencido antes de ihu ({detail}); runtime NORMAL={runtimeNormal}.");
+                    Plugin.FileLog($"Fast chest cooldown: bdlr {boxType} vencido antes de ihu ({detail}); runtime {boxType}={runtimeCount}.");
                 }
             }
         }
         catch (Exception ex)
         {
-            Plugin.FileLog("Fast chest cooldown: PrepareFastChestCooldownBeforeStageDrop fallo: " + ex.Message);
+            Plugin.FileLog("Fast chest cooldown: PrepareFastChestDropBeforeStageDrop fallo: " + ex.Message);
         }
     }
 
     internal static void OnStageBoxCooldownSet(global::TaskbarHero.StageManager stageManager, global::TaskbarHero.EBoxType boxType, int itemKey)
     {
-        if (Plugin.IsShuttingDown || IsGameQuitting || !FastChestDropsEnabled || boxType != global::TaskbarHero.EBoxType.NORMAL || !IsValid(stageManager))
+        if (Plugin.IsShuttingDown || IsGameQuitting || !FastChestDropsEnabled || !IsFastChestBoxType(boxType) || !IsValid(stageManager))
         {
             return;
         }
 
         try
         {
-            float now = global::UnityEngine.Time.unscaledTime;
+            float now = GetStageBoxCooldownClock();
             float next = now + FastChestDropIntervalSeconds;
             lock (FastChestCooldownSync)
             {
                 if (!TrySetStageBoxCooldownValue(stageManager, boxType, next, out string detail))
                 {
-                    Plugin.FileLog("Fast chest cooldown: no pude fijar bdlr NORMAL despues de StageManager.ihw: " + detail);
+                    Plugin.FileLog($"Fast chest cooldown: no pude fijar bdlr {boxType} despues de StageManager.ihw: " + detail);
                     return;
                 }
 
@@ -2772,7 +2947,7 @@ internal sealed class ModActions
                 int updates = Interlocked.Increment(ref _fastChestCooldownUpdates);
                 if (updates <= 10 || updates % 25 == 0)
                 {
-                    Plugin.FileLog($"Fast chest cooldown: StageManager.ihw NORMAL itemKey={itemKey}, siguiente intento en {FastChestDropIntervalSeconds}s ({detail}).");
+                    Plugin.FileLog($"Fast chest cooldown: StageManager.ihw {boxType} itemKey={itemKey}, siguiente intento en {FastChestDropIntervalSeconds}s ({detail}).");
                 }
             }
         }
@@ -2780,6 +2955,12 @@ internal sealed class ModActions
         {
             Plugin.FileLog("Fast chest cooldown: OnStageBoxCooldownSet fallo: " + ex.Message);
         }
+    }
+
+    private static bool IsFastChestBoxType(global::TaskbarHero.EBoxType boxType)
+    {
+        return boxType == global::TaskbarHero.EBoxType.NORMAL ||
+               boxType == global::TaskbarHero.EBoxType.BOSS;
     }
 
     private static bool TrySetStageBoxCooldownValue(
@@ -2791,26 +2972,192 @@ internal sealed class ModActions
         detail = string.Empty;
         try
         {
-            var field = StageManagerBoxCooldownsField.Value;
-            if (field == null)
+            if (!TryGetStageBoxCooldownDictionary(stageManager, out object raw, out string source, out detail))
             {
-                detail = "campo bdlr no encontrado";
                 return false;
             }
 
-            var raw = field.GetValue(stageManager);
             var cooldowns = raw as Il2CppSystem.Collections.Generic.Dictionary<global::TaskbarHero.EBoxType, float>;
-            if (cooldowns == null)
+            if (cooldowns != null)
             {
-                detail = raw == null ? "bdlr null" : "bdlr tipo " + raw.GetType().FullName;
+                bool hadPrevious = cooldowns.TryGetValue(boxType, out float previous);
+                cooldowns[boxType] = value;
+                string before = hadPrevious ? previous.ToString("0.00", CultureInfo.InvariantCulture) : "sin valor";
+                detail = source + " " + before + "->" + value.ToString("0.00", CultureInfo.InvariantCulture);
+                return true;
+            }
+
+            if (raw == null)
+            {
+                detail = source + " null";
                 return false;
             }
 
-            bool hadPrevious = cooldowns.TryGetValue(boxType, out float previous);
-            cooldowns[boxType] = value;
+            return TrySetDictionaryValueByReflection(raw, boxType, value, source, out detail);
+        }
+        catch (Exception ex)
+        {
+            detail = ex.Message;
+            return false;
+        }
+    }
+
+    private static bool TryReadStageBoxCooldownValue(
+        global::TaskbarHero.StageManager stageManager,
+        global::TaskbarHero.EBoxType boxType,
+        out float value,
+        out string detail)
+    {
+        value = 0f;
+        detail = string.Empty;
+        try
+        {
+            if (!TryGetStageBoxCooldownDictionary(stageManager, out object raw, out string source, out detail))
+            {
+                return false;
+            }
+
+            var cooldowns = raw as Il2CppSystem.Collections.Generic.Dictionary<global::TaskbarHero.EBoxType, float>;
+            if (cooldowns != null)
+            {
+                if (cooldowns.TryGetValue(boxType, out value))
+                {
+                    return true;
+                }
+
+                detail = source + " sin clave " + boxType;
+                return false;
+            }
+
+            if (raw == null)
+            {
+                detail = source + " null";
+                return false;
+            }
+
+            return TryReadDictionaryValueByReflection(raw, boxType, out value, out detail);
+        }
+        catch (Exception ex)
+        {
+            detail = ex.Message;
+            return false;
+        }
+    }
+
+    private static bool TryGetStageBoxCooldownDictionary(
+        global::TaskbarHero.StageManager stageManager,
+        out object dictionary,
+        out string source,
+        out string detail)
+    {
+        dictionary = null;
+        source = "bdlr";
+        detail = string.Empty;
+        try
+        {
+            var getter = StageManagerBoxCooldownsGetter.Value;
+            if (getter != null)
+            {
+                dictionary = getter.Invoke(stageManager, Array.Empty<object>());
+                source = getter.Name;
+                return true;
+            }
+
+            var field = StageManagerBoxCooldownsField.Value;
+            if (field != null)
+            {
+                dictionary = field.GetValue(stageManager);
+                source = field.Name;
+                return true;
+            }
+
+            detail = "getter/campo bdlr no encontrado";
+            return false;
+        }
+        catch (Exception ex)
+        {
+            detail = ex.Message;
+            return false;
+        }
+    }
+
+    private static float GetStageBoxCooldownClock()
+    {
+        return global::UnityEngine.Time.time;
+    }
+
+    private static bool TrySetDictionaryValueByReflection(object dictionary, global::TaskbarHero.EBoxType boxType, float value, string fieldName, out string detail)
+    {
+        detail = string.Empty;
+        try
+        {
+            var type = dictionary.GetType();
+            float previous = 0f;
+            bool hadPrevious = TryReadDictionaryValueByReflection(dictionary, boxType, out previous, out _);
+            var setItem = type.GetMethod("set_Item", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (setItem == null)
+            {
+                detail = fieldName + " tipo " + type.FullName + " sin set_Item";
+                return false;
+            }
+
+            setItem.Invoke(dictionary, new object[] { boxType, value });
             string before = hadPrevious ? previous.ToString("0.00", CultureInfo.InvariantCulture) : "sin valor";
-            detail = before + "->" + value.ToString("0.00", CultureInfo.InvariantCulture);
+            detail = fieldName + " " + before + "->" + value.ToString("0.00", CultureInfo.InvariantCulture) + " via reflection";
             return true;
+        }
+        catch (Exception ex)
+        {
+            detail = fieldName + " reflection " + ex.Message;
+            return false;
+        }
+    }
+
+    private static bool TryReadDictionaryValueByReflection(object dictionary, global::TaskbarHero.EBoxType boxType, out float value, out string detail)
+    {
+        value = 0f;
+        detail = string.Empty;
+        try
+        {
+            var type = dictionary.GetType();
+            MethodInfo tryGetValue = null;
+            foreach (var method in type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+            {
+                if (!string.Equals(method.Name, "TryGetValue", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var parameters = method.GetParameters();
+                if (parameters.Length == 2)
+                {
+                    tryGetValue = method;
+                    break;
+                }
+            }
+
+            if (tryGetValue != null)
+            {
+                object[] args = { boxType, 0f };
+                bool ok = tryGetValue.Invoke(dictionary, args) is bool result && result;
+                if (ok && args[1] != null)
+                {
+                    value = Convert.ToSingle(args[1], CultureInfo.InvariantCulture);
+                }
+
+                return ok;
+            }
+
+            var getItem = type.GetMethod("get_Item", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (getItem != null)
+            {
+                object raw = getItem.Invoke(dictionary, new object[] { boxType });
+                value = Convert.ToSingle(raw, CultureInfo.InvariantCulture);
+                return true;
+            }
+
+            detail = "tipo " + type.FullName + " sin TryGetValue/get_Item";
+            return false;
         }
         catch (Exception ex)
         {
@@ -2821,7 +3168,7 @@ internal sealed class ModActions
 
     internal static void ApplyFastChestDropCheck(global::TaskbarHero.EBoxType boxType, ref bool result)
     {
-        if (Plugin.IsShuttingDown || IsGameQuitting || !FastChestDropsEnabled || boxType != global::TaskbarHero.EBoxType.NORMAL)
+        if (Plugin.IsShuttingDown || IsGameQuitting || !FastChestDropsEnabled || !IsFastChestBoxType(boxType))
         {
             return;
         }
@@ -2836,16 +3183,16 @@ internal sealed class ModActions
             return;
         }
 
-        int runtimeNormal = GetRuntimeBoxCount(global::TaskbarHero.EBoxType.NORMAL);
-        if (runtimeNormal >= FastChestMaxNormalChests)
+        int runtimeCount = GetRuntimeBoxCount(boxType);
+        if (runtimeCount >= FastChestMaxNormalChests)
         {
-            Plugin.FileLog($"Fast chest drops: saltado, ya hay {runtimeNormal} cofres NORMAL en runtime.");
+            Plugin.FileLog($"Fast chest drops: saltado, ya hay {runtimeCount} cofres {boxType} en runtime.");
             return;
         }
 
         result = true;
         Interlocked.Increment(ref _fastChestDropForces);
-        Plugin.FileLog($"Fast chest drops: StageManager.ihv permitio drop real NORMAL; runtime NORMAL antes={runtimeNormal}, siguiente ventana {FastChestDropIntervalSeconds}s.");
+        Plugin.FileLog($"Fast chest drops: StageManager.ihv permitio drop real {boxType}; runtime antes={runtimeCount}, siguiente ventana {FastChestDropIntervalSeconds}s.");
     }
 
     internal static void TryForceFastChestDropFromStage(global::TaskbarHero.StageManager stageManager, object[] args)
@@ -3376,6 +3723,29 @@ internal sealed class ModActions
         }
     }
 
+    internal static void TraceFastChestRequest(int itemKey)
+    {
+        if (Plugin.IsShuttingDown || IsGameQuitting || !FastChestDropsEnabled)
+        {
+            return;
+        }
+
+        try
+        {
+            int observations = Interlocked.Increment(ref _fastChestRequestObservations);
+            int normalStageBoxItemKey = FindStageBoxItemKey(global::TaskbarHero.EBoxType.NORMAL);
+            bool isNormalStageBox = normalStageBoxItemKey <= 0 || itemKey == normalStageBoxItemKey;
+            if (isNormalStageBox && (observations <= 10 || observations % 25 == 0))
+            {
+                Plugin.FileLog($"Fast chest request: uz.uc.izd original itemKey={itemKey}, runtime NORMAL={GetRuntimeBoxCount(global::TaskbarHero.EBoxType.NORMAL)}, BOSS={GetRuntimeBoxCount(global::TaskbarHero.EBoxType.BOSS)}.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.FileLog("Fast chest request trace failed: " + ex.Message);
+        }
+    }
+
     private static void AppendFastChestStoreSummary(StringBuilder details, string text)
     {
         if (details == null || string.IsNullOrWhiteSpace(text))
@@ -3739,9 +4109,36 @@ internal sealed class ModActions
         }
     }
 
+    internal static void ApplyFastChestChanceResult(ref float result, string source)
+    {
+        if (Plugin.IsShuttingDown || IsGameQuitting || !FastChestDropsEnabled)
+        {
+            return;
+        }
+
+        int observations = Interlocked.Increment(ref _fastChestChanceResultObservations);
+        if (result >= FastChestDropChanceInput)
+        {
+            if (observations <= 10 || observations % 50 == 0)
+            {
+                Plugin.FileLog($"Fast chest drops: {source} chance result observado {result.ToString("0.###", CultureInfo.InvariantCulture)}.");
+            }
+
+            return;
+        }
+
+        float before = result;
+        result = FastChestDropChanceInput;
+        int updates = Interlocked.Increment(ref _fastChestChanceInputUpdates);
+        if (updates <= 5 || updates % 25 == 0)
+        {
+            Plugin.FileLog($"Fast chest drops: {source} chance result {before.ToString("0.###", CultureInfo.InvariantCulture)}->{result.ToString("0.###", CultureInfo.InvariantCulture)}.");
+        }
+    }
+
     internal static void ApplyFastChestMaxBoxAmount(global::TaskbarHero.EBoxType boxType, ref int result)
     {
-        if (Plugin.IsShuttingDown || IsGameQuitting || !FastChestDropsEnabled || boxType != global::TaskbarHero.EBoxType.NORMAL)
+        if (Plugin.IsShuttingDown || IsGameQuitting || !FastChestDropsEnabled || !IsFastChestBoxType(boxType))
         {
             return;
         }
@@ -3751,17 +4148,17 @@ internal sealed class ModActions
 
     internal static void ApplyFastChestCanAddBox(global::TaskbarHero.EBoxType boxType, ref bool result)
     {
-        if (Plugin.IsShuttingDown || IsGameQuitting || !FastChestDropsEnabled || boxType != global::TaskbarHero.EBoxType.NORMAL)
+        if (Plugin.IsShuttingDown || IsGameQuitting || !FastChestDropsEnabled || !IsFastChestBoxType(boxType))
         {
             return;
         }
 
-        int runtimeNormal = GetRuntimeBoxCount(global::TaskbarHero.EBoxType.NORMAL);
-        if (runtimeNormal < FastChestMaxNormalChests)
+        int runtimeCount = GetRuntimeBoxCount(boxType);
+        if (runtimeCount < FastChestMaxNormalChests)
         {
             if (!result)
             {
-                Plugin.FileLog($"Fast chest drops: uz.ty.iuf permitira NORMAL; runtime={runtimeNormal}, limite={FastChestMaxNormalChests}.");
+                Plugin.FileLog($"Fast chest drops: uz.ty.iuf permitira {boxType}; runtime={runtimeCount}, limite={FastChestMaxNormalChests}.");
             }
 
             result = true;
@@ -8963,10 +9360,41 @@ internal sealed class ModActions
         return manager == null || manager.Pointer == IntPtr.Zero ? null : manager;
     }
 
+    private static MethodInfo ResolveStageManagerBoxCooldownsGetter()
+    {
+        try
+        {
+            var getter = AccessTools.PropertyGetter(typeof(global::TaskbarHero.StageManager), "bdlr") ??
+                         AccessTools.Method(typeof(global::TaskbarHero.StageManager), "get_bdlr");
+            if (getter != null)
+            {
+                string returnType = getter.ReturnType?.FullName ?? getter.ReturnType?.Name ?? string.Empty;
+                Plugin.FileLog("Fast chest cooldown getter resolved: " + getter.Name + " " + returnType);
+                return getter;
+            }
+
+            Plugin.FileLog("Fast chest cooldown getter not found.");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Plugin.FileLog("Fast chest cooldown getter resolve failed: " + ex.Message);
+            return null;
+        }
+    }
+
     private static FieldInfo ResolveStageManagerBoxCooldownsField()
     {
         try
         {
+            var namedField = AccessTools.Field(typeof(global::TaskbarHero.StageManager), "bdlr");
+            if (namedField != null)
+            {
+                string namedType = namedField.FieldType?.FullName ?? namedField.FieldType?.Name ?? string.Empty;
+                Plugin.FileLog("Fast chest cooldown field resolved by name: " + namedField.Name + " " + namedType);
+                return namedField;
+            }
+
             var fields = AccessTools.GetDeclaredFields(typeof(global::TaskbarHero.StageManager));
             var candidates = new StringBuilder();
             for (int i = 0; i < fields.Count; i++)
@@ -9035,6 +9463,13 @@ internal sealed class ModActions
                fullName.IndexOf("EBoxType", StringComparison.OrdinalIgnoreCase) >= 0 &&
                (fullName.IndexOf("Single", StringComparison.OrdinalIgnoreCase) >= 0 ||
                 fullName.IndexOf("System.Single", StringComparison.OrdinalIgnoreCase) >= 0);
+    }
+
+    private static global::TaskbarHero.StageManager GetStageManager()
+    {
+        AttachIl2CppThread();
+        var manager = global::np<global::TaskbarHero.StageManager>.brzs;
+        return manager == null || manager.Pointer == IntPtr.Zero ? null : manager;
     }
 
     private static global::vy GetStageBoxManager()
@@ -9397,12 +9832,21 @@ internal static class OneHitKillMonsterPatch
     }
 }
 
+[HarmonyPatch]
 internal static class TrainerFastNormalChestDropPatch
 {
     private static IEnumerable<MethodBase> TargetMethods()
     {
-        // Retired: forcing chest drop checks produced local/server-invalid boxes.
-        yield break;
+        var method = AccessTools.Method(
+            typeof(global::TaskbarHero.StageManager),
+            "ihv",
+            new[] { typeof(global::TaskbarHero.EBoxType) });
+
+        if (method != null)
+        {
+            Plugin.FileLog("Fast chest ihv patch target: " + method.FullDescription());
+            yield return method;
+        }
     }
 
     private static void Postfix(global::TaskbarHero.EBoxType a, ref bool __result)
@@ -9434,10 +9878,17 @@ internal static class TrainerFastStageChestDropPatch
         }
     }
 
-    private static void Prefix(global::TaskbarHero.StageManager __instance, object[] __args)
+    private static void Prefix(
+        global::TaskbarHero.StageManager __instance,
+        int a,
+        global::TaskbarHero.Data.EStageType b,
+        ref int c,
+        ref float d,
+        global::TaskbarHero.Data.EMonsterType e)
     {
         ModActions.ReapplyGameSpeedIfNeeded("StageManager.ihu prefix");
-        ModActions.PrepareFastChestCooldownBeforeStageDrop(__instance, __args);
+        ModActions.SyncFastChestAccountStatusOnMainThread();
+        ModActions.PrepareFastChestDropBeforeStageDrop(__instance, a, b, e, ref c, ref d);
     }
 }
 
@@ -9554,12 +10005,50 @@ internal static class TrainerStageBoxAddItemTracePatch
     }
 }
 
+[HarmonyPatch]
+internal static class TrainerFastChestRequestTracePatch
+{
+    private static IEnumerable<MethodBase> TargetMethods()
+    {
+        foreach (var method in AccessTools.GetDeclaredMethods(typeof(global::uz.uc)))
+        {
+            if (!string.Equals(method.Name, "izd", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var parameters = method.GetParameters();
+            if (parameters.Length != 2 || parameters[0].ParameterType != typeof(int))
+            {
+                continue;
+            }
+
+            Plugin.FileLog("Fast chest request trace patch target: " + method.FullDescription());
+            yield return method;
+        }
+    }
+
+    private static void Prefix(int a)
+    {
+        ModActions.TraceFastChestRequest(a);
+    }
+}
+
+[HarmonyPatch]
 internal static class TrainerFastChestCanAddBoxPatch
 {
     private static IEnumerable<MethodBase> TargetMethods()
     {
-        // Retired with the forced chest path.
-        yield break;
+        var method = AccessTools.Method(
+            typeof(global::uz.ty),
+            "iuf",
+            new[] { typeof(global::TaskbarHero.EBoxType) });
+
+        if (method != null)
+        {
+            Plugin.FileLog("Fast chest can-add patch target: " + method.FullDescription());
+            yield return method;
+        }
     }
 
     private static void Postfix(global::TaskbarHero.EBoxType a, ref bool __result)
@@ -9581,6 +10070,40 @@ internal static class TrainerFastChestAccountStatusPatch
     private static void Postfix(global::TaskbarHero.StatusSystem.EAccountStatus a, ref int __result)
     {
         ModActions.ApplyFastChestAccountStatus(a, ref __result);
+    }
+}
+
+[HarmonyPatch]
+internal static class TrainerFastChestChanceResultPatch
+{
+    private static IEnumerable<MethodBase> TargetMethods()
+    {
+        var normal = AccessTools.Method(typeof(global::yw), "kow", new[] { typeof(float) });
+        if (normal != null)
+        {
+            Plugin.FileLog("Fast chest chance patch target: " + normal.FullDescription());
+            yield return normal;
+        }
+        else
+        {
+            Plugin.FileLog("Fast chest chance patch target yw.kow not found.");
+        }
+
+        var boss = AccessTools.Method(typeof(global::yw), "kox", new[] { typeof(float) });
+        if (boss != null)
+        {
+            Plugin.FileLog("Fast chest chance patch target: " + boss.FullDescription());
+            yield return boss;
+        }
+        else
+        {
+            Plugin.FileLog("Fast chest chance patch target yw.kox not found.");
+        }
+    }
+
+    private static void Postfix(MethodBase __originalMethod, ref float __result)
+    {
+        ModActions.ApplyFastChestChanceResult(ref __result, __originalMethod?.Name ?? "yw chance");
     }
 }
 

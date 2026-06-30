@@ -67,6 +67,7 @@ internal sealed class TrainerForm : Form
     private readonly Button _hunterGemsButton;
     private readonly Button _slayerGemsButton;
     private readonly CheckBox _oneHitToggle;
+    private readonly CheckBox _chestBoostToggle;
     private readonly Button _repairEquippedDupesButton;
     private readonly Label _gameSpeedLabel;
     private readonly TrackBar _gameSpeedTrackBar;
@@ -212,6 +213,8 @@ internal sealed class TrainerForm : Form
 
         _oneHitToggle = CreateToggle("One hit kill: OFF");
         _oneHitToggle.CheckedChanged += (_, _) => ToggleOneHitKill();
+        _chestBoostToggle = CreateToggle("Chest drop boost: OFF");
+        _chestBoostToggle.CheckedChanged += (_, _) => ToggleChestBoost();
 
         _gameSpeedLabel = new Label
         {
@@ -394,7 +397,7 @@ internal sealed class TrainerForm : Form
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         panel.RowStyles.Add(new RowStyle(SizeType.Absolute, ButtonHeight + 8));
         panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-        AddGridControl(panel, _oneHitToggle, 0, 0);
+        AddGridControl(panel, BuildTwoColumnRows((_oneHitToggle, _chestBoostToggle)), 0, 0);
         AddGridControl(panel, BuildSpeedPanel(), 0, 1);
         return panel;
     }
@@ -548,6 +551,7 @@ internal sealed class TrainerForm : Form
             _slayerGemsButton,
             _repairEquippedDupesButton,
             _oneHitToggle,
+            _chestBoostToggle,
             _gameSpeedTrackBar,
             _gameSpeedResetButton,
             _addItemButton,
@@ -592,6 +596,13 @@ internal sealed class TrainerForm : Form
         bool enabled = _oneHitToggle.Checked;
         _oneHitToggle.Text = enabled ? "One hit kill: ON" : "One hit kill: OFF";
         SendCommand(enabled ? "ONE_HIT:ON" : "ONE_HIT:OFF");
+    }
+
+    private void ToggleChestBoost()
+    {
+        bool enabled = _chestBoostToggle.Checked;
+        _chestBoostToggle.Text = enabled ? "Chest drop boost: ON" : "Chest drop boost: OFF";
+        SendCommand(enabled ? "FAST_CHESTS:ON" : "FAST_CHESTS:OFF");
     }
 
     private void UpdateGameSpeedLabel()
