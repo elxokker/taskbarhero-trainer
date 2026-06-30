@@ -1,0 +1,12 @@
+bin/
+obj/
+.vs/
+.idea/
+*.user
+*.suo
+*.zip
+TaskbarHeroTrainer-v*/
+bepinex_payload/
+TaskbarHeroTrainer_Backup_*/
+TaskbarHeroTrainer_Backups/
+*.log
