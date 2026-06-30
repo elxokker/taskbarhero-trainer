@@ -533,7 +533,7 @@ internal sealed class ModActions
                     FastChestDropsEnabled = true;
                     FastChestStatBoostEnabled = true;
                     string status = ApplyChestDropAccountStatusBoost(true);
-                    status += $" Bonus de runas/cofres se sincroniza en hilo Unity durante StageManager.ihu; cooldown NORMAL objetivo {FastChestDropIntervalSeconds}s via StageManager.bdlr; probabilidad de entrada NORMAL {FastChestDropChanceInput.ToString("0", CultureInfo.InvariantCulture)}%; flujo original del juego, sin crear cofres ni rewards locales.";
+                    status += $" Bonus de runas/cofres se sincroniza en hilo Unity durante StageManager.ihu; cooldown NORMAL objetivo {FastChestDropIntervalSeconds}s via StageManager.bdlr/unscaledTime; peticion de cofre por flujo de stage del juego; probabilidad de entrada NORMAL {FastChestDropChanceInput.ToString("0", CultureInfo.InvariantCulture)}%; sin crear cofres ni rewards locales falsos.";
                     Plugin.FileLog(status);
                     return status;
                 }
@@ -3083,7 +3083,7 @@ internal sealed class ModActions
 
     private static float GetStageBoxCooldownClock()
     {
-        return global::UnityEngine.Time.time;
+        return global::UnityEngine.Time.unscaledTime;
     }
 
     private static bool TrySetDictionaryValueByReflection(object dictionary, global::TaskbarHero.EBoxType boxType, float value, string fieldName, out string detail)
@@ -9889,6 +9889,7 @@ internal static class TrainerFastStageChestDropPatch
         ModActions.ReapplyGameSpeedIfNeeded("StageManager.ihu prefix");
         ModActions.SyncFastChestAccountStatusOnMainThread();
         ModActions.PrepareFastChestDropBeforeStageDrop(__instance, a, b, e, ref c, ref d);
+        ModActions.TryForceFastChestDropFromStage(__instance, new object[] { a, b, c, d, e });
     }
 }
 
