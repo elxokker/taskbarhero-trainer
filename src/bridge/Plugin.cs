@@ -322,6 +322,11 @@ internal sealed class ModActions
                 : $"Velocidad invalida: {rawSpeed}";
         }
 
+        if (normalized == "GAME_SPEED_STATUS")
+        {
+            return GetGameSpeedStatus();
+        }
+
         if (normalized.StartsWith("HERO_ABILITY_POINTS:", StringComparison.Ordinal))
         {
             string rawPoints = normalized.Substring("HERO_ABILITY_POINTS:".Length);
@@ -970,6 +975,31 @@ internal sealed class ModActions
             {
                 return Fail("Set game speed fallo", ex);
             }
+        }
+    }
+
+    public string GetGameSpeedStatus()
+    {
+        try
+        {
+            AttachIl2CppThread();
+            float desired = _desiredGameSpeed;
+            float current = global::UnityEngine.Time.timeScale;
+            float currentFixed = global::UnityEngine.Time.fixedDeltaTime;
+            float targetFixed = DefaultFixedDeltaTime * desired;
+            return "Velocidad runtime: deseada " +
+                   desired.ToString("0.0", CultureInfo.InvariantCulture) +
+                   "x, actual " +
+                   current.ToString("0.0", CultureInfo.InvariantCulture) +
+                   "x, fixedDelta " +
+                   currentFixed.ToString("0.000", CultureInfo.InvariantCulture) +
+                   " objetivo " +
+                   targetFixed.ToString("0.000", CultureInfo.InvariantCulture) +
+                   ".";
+        }
+        catch (Exception ex)
+        {
+            return Fail("Game speed status fallo", ex);
         }
     }
 
@@ -7095,6 +7125,60 @@ internal static class GodModeHeroDamagePatch
         a.FloatingDamageText = false;
         a.PlayHitFeedBack = false;
         return false;
+    }
+}
+
+[HarmonyPatch(typeof(global::UnityEngine.Time), "set_timeScale")]
+internal static class TrainerTimeScalePatch
+{
+    private static void Prefix(ref float value)
+    {
+        ModActions.FilterRequestedTimeScale(ref value);
+    }
+}
+
+[HarmonyPatch(typeof(global::UnityEngine.Time), "set_fixedDeltaTime")]
+internal static class TrainerFixedDeltaTimePatch
+{
+    private static void Prefix(ref float value)
+    {
+        ModActions.FilterRequestedFixedDeltaTime(ref value);
+    }
+}
+
+[HarmonyPatch(typeof(global::TaskbarHero.StageManager), "ifx")]
+internal static class TrainerStageEnterPatch
+{
+    private static void Postfix()
+    {
+        ModActions.ReapplyGameSpeedIfNeeded("StageManager.ifx");
+    }
+}
+
+[HarmonyPatch(typeof(global::TaskbarHero.StageManager), "ihc")]
+internal static class TrainerStageChangePatch
+{
+    private static void Postfix()
+    {
+        ModActions.ReapplyGameSpeedIfNeeded("StageManager.ihc");
+    }
+}
+
+[HarmonyPatch(typeof(global::TaskbarHero.StageManager), "ige")]
+internal static class TrainerStageSpawnPatch
+{
+    private static void Postfix()
+    {
+        ModActions.ReapplyGameSpeedIfNeeded("StageManager.ige");
+    }
+}
+
+[HarmonyPatch(typeof(global::TaskbarHero.StageManager), "iic")]
+internal static class TrainerStageResetPatch
+{
+    private static void Postfix()
+    {
+        ModActions.ReapplyGameSpeedIfNeeded("StageManager.iic");
     }
 }
 
