@@ -209,8 +209,6 @@ internal sealed class ModActions
     private const int FastChestChanceTarget = 100_000_000;
     private const int FastChestChancePercentTarget = 10_000;
     private const int FastChestMaxNormalChests = 99;
-    private const int FastChestAutoOpenUnlockTarget = 1;
-    private const int FastChestAutoOpenTimeReductionTarget = 86_400;
     private const int FastChestStatusBoostSource = 941414;
     private const float FastChestCooldownExpireSlackSeconds = 0.25f;
     private const float FastChestDropChanceInput = 100f;
@@ -585,13 +583,9 @@ internal sealed class ModActions
                 (global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceNormalChest, FastChestChanceTarget),
                 (global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceNormalChestPercent, FastChestChancePercentTarget),
                 (global::TaskbarHero.StatusSystem.EAccountStatus.MaxAmountNormalChest, FastChestMaxNormalChests),
-                (global::TaskbarHero.StatusSystem.EAccountStatus.UnlockAutoOpenNormalChest, FastChestAutoOpenUnlockTarget),
-                (global::TaskbarHero.StatusSystem.EAccountStatus.ReduceAutoOpenNormalChestTime, FastChestAutoOpenTimeReductionTarget),
                 (global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceStageBossChest, FastChestChanceTarget),
                 (global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceStageBossChestPercent, FastChestChancePercentTarget),
-                (global::TaskbarHero.StatusSystem.EAccountStatus.MaxAmountStageBossChest, FastChestMaxNormalChests),
-                (global::TaskbarHero.StatusSystem.EAccountStatus.UnlockAutoOpenStageBossChest, FastChestAutoOpenUnlockTarget),
-                (global::TaskbarHero.StatusSystem.EAccountStatus.ReduceAutoOpenStageBossChestTime, FastChestAutoOpenTimeReductionTarget)
+                (global::TaskbarHero.StatusSystem.EAccountStatus.MaxAmountStageBossChest, FastChestMaxNormalChests)
             };
 
             lock (ChestStatusBoostSync)
@@ -2832,13 +2826,9 @@ internal sealed class ModActions
                 changed += SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceNormalChest, FastChestChanceTarget, details);
                 changed += SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceNormalChestPercent, FastChestChancePercentTarget, details);
                 changed += SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.MaxAmountNormalChest, FastChestMaxNormalChests, details);
-                changed += SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.UnlockAutoOpenNormalChest, FastChestAutoOpenUnlockTarget, details);
-                changed += SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.ReduceAutoOpenNormalChestTime, FastChestAutoOpenTimeReductionTarget, details);
                 changed += SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceStageBossChest, FastChestChanceTarget, details);
                 changed += SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceStageBossChestPercent, FastChestChancePercentTarget, details);
                 changed += SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.MaxAmountStageBossChest, FastChestMaxNormalChests, details);
-                changed += SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.UnlockAutoOpenStageBossChest, FastChestAutoOpenUnlockTarget, details);
-                changed += SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.ReduceAutoOpenStageBossChestTime, FastChestAutoOpenTimeReductionTarget, details);
 
                 _fastChestStatusContributionApplied = true;
                 Interlocked.Exchange(ref _nextFastChestStatusSyncUtcTicks, DateTime.UtcNow.AddSeconds(10).Ticks);
@@ -2855,13 +2845,9 @@ internal sealed class ModActions
             SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceNormalChest, 0, clearDetails);
             SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceNormalChestPercent, 0, clearDetails);
             SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.MaxAmountNormalChest, 0, clearDetails);
-            SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.UnlockAutoOpenNormalChest, 0, clearDetails);
-            SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.ReduceAutoOpenNormalChestTime, 0, clearDetails);
             SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceStageBossChest, 0, clearDetails);
             SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceStageBossChestPercent, 0, clearDetails);
             SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.MaxAmountStageBossChest, 0, clearDetails);
-            SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.UnlockAutoOpenStageBossChest, 0, clearDetails);
-            SetFastChestAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.ReduceAutoOpenStageBossChestTime, 0, clearDetails);
             _fastChestStatusContributionApplied = false;
             Interlocked.Exchange(ref _nextFastChestStatusSyncUtcTicks, 0);
             Plugin.FileLog("Fast chest status: contribuciones retiradas en hilo Unity; " + clearDetails);
@@ -2947,17 +2933,6 @@ internal sealed class ModActions
             Plugin.FileLog($"Fast chest drops: elegible {boxType} itemKey={stageBoxItemKey}, stage={stageType}, monsterType={monsterType}, monster={monsterKey}, runtime={runtimeCount}.");
         }
 
-        if (dropChanceInput < FastChestDropChanceInput)
-        {
-            float before = dropChanceInput;
-            dropChanceInput = FastChestDropChanceInput;
-            int updates = Interlocked.Increment(ref _fastChestChanceInputUpdates);
-            if (updates <= 5 || updates % 25 == 0)
-            {
-                Plugin.FileLog($"Fast chest drops: StageManager.ihu drop chance input {before.ToString("0.###", CultureInfo.InvariantCulture)}->{dropChanceInput.ToString("0.###", CultureInfo.InvariantCulture)}.");
-            }
-        }
-
         try
         {
             float now = GetStageBoxCooldownClock();
@@ -2968,6 +2943,17 @@ internal sealed class ModActions
                     return;
                 }
 
+                if (dropChanceInput < FastChestDropChanceInput)
+                {
+                    float before = dropChanceInput;
+                    dropChanceInput = FastChestDropChanceInput;
+                    int updates = Interlocked.Increment(ref _fastChestChanceInputUpdates);
+                    if (updates <= 5 || updates % 25 == 0)
+                    {
+                        Plugin.FileLog($"Fast chest drops: StageManager.ihu drop chance input {before.ToString("0.###", CultureInfo.InvariantCulture)}->{dropChanceInput.ToString("0.###", CultureInfo.InvariantCulture)}.");
+                    }
+                }
+
                 float expiredAt = now - FastChestCooldownExpireSlackSeconds;
                 if (!TrySetStageBoxCooldownValue(stageManager, boxType, expiredAt, out string detail))
                 {
@@ -2976,11 +2962,11 @@ internal sealed class ModActions
                     return;
                 }
 
-                _nextFastChestCooldownUnscaled = now + 1f;
+                _nextFastChestCooldownUnscaled = now + FastChestDropIntervalSeconds;
                 int expirations = Interlocked.Increment(ref _fastChestCooldownExpirations);
                 if (expirations <= 5 || expirations % 25 == 0)
                 {
-                    Plugin.FileLog($"Fast chest cooldown: bdlr {boxType} vencido antes de ihu ({detail}); runtime {boxType}={runtimeCount}.");
+                    Plugin.FileLog($"Fast chest cooldown: bdlr {boxType} vencido antes de ihu ({detail}); siguiente intento en {FastChestDropIntervalSeconds}s; runtime {boxType}={runtimeCount}.");
                 }
             }
         }
@@ -3703,7 +3689,7 @@ internal sealed class ModActions
 
             if (IsValid(box))
             {
-                TrackStageBoxOpenTrace(uniqueId, ReadBoxIsGet(box) && HasValidBoxReward(box));
+                TrackStageBoxOpenTrace(uniqueId, HasValidBoxReward(box));
                 return;
             }
 
@@ -3719,7 +3705,7 @@ internal sealed class ModActions
         }
     }
 
-    private static void TrackStageBoxOpenTrace(ulong uniqueId, bool completed)
+    private static void TrackStageBoxOpenTrace(ulong uniqueId, bool hasValidReward)
     {
         if (uniqueId == 0UL)
         {
@@ -3729,7 +3715,7 @@ internal sealed class ModActions
         lock (StageBoxOpenTraceSync)
         {
             StageBoxOpenNullCounts.Remove(uniqueId);
-            if (completed)
+            if (hasValidReward)
             {
                 StageBoxOpenCompletedIds.Add(uniqueId);
             }
@@ -4517,12 +4503,6 @@ internal sealed class ModActions
             case global::TaskbarHero.StatusSystem.EAccountStatus.MaxAmountNormalChest:
                 result = Math.Max(result, FastChestMaxNormalChests);
                 break;
-            case global::TaskbarHero.StatusSystem.EAccountStatus.UnlockAutoOpenNormalChest:
-                result = Math.Max(result, FastChestAutoOpenUnlockTarget);
-                break;
-            case global::TaskbarHero.StatusSystem.EAccountStatus.ReduceAutoOpenNormalChestTime:
-                result = Math.Max(result, FastChestAutoOpenTimeReductionTarget);
-                break;
             case global::TaskbarHero.StatusSystem.EAccountStatus.DropChanceStageBossChest:
                 result = Math.Max(result, FastChestChanceTarget);
                 break;
@@ -4531,12 +4511,6 @@ internal sealed class ModActions
                 break;
             case global::TaskbarHero.StatusSystem.EAccountStatus.MaxAmountStageBossChest:
                 result = Math.Max(result, FastChestMaxNormalChests);
-                break;
-            case global::TaskbarHero.StatusSystem.EAccountStatus.UnlockAutoOpenStageBossChest:
-                result = Math.Max(result, FastChestAutoOpenUnlockTarget);
-                break;
-            case global::TaskbarHero.StatusSystem.EAccountStatus.ReduceAutoOpenStageBossChestTime:
-                result = Math.Max(result, FastChestAutoOpenTimeReductionTarget);
                 break;
         }
     }
