@@ -213,6 +213,8 @@ internal sealed class ModActions
     private const float MaxGameSpeed = 10f;
     private const float GameSpeedEpsilon = 0.001f;
     private const int GameSpeedStatusBoostSource = 941415;
+    private const int PrototypeHeroKey = 701;
+    private const int PrototypeHeroSourceKey = 101;
     private const string PreferredHeroFormationFileName = "preferred_hero_formation.txt";
 
     private static readonly string[] SharedClassGearTypes =
@@ -342,6 +344,8 @@ internal sealed class ModActions
             "RESTORE_WINDOW" => "RESTORE_WINDOW desactivado: el trainer ya no modifica tamano ni posicion de la ventana.",
             "CURRENCIES" => SetAllCurrencies(),
             "HEROES" => SetAllHeroes(),
+            "PROTOTYPE_HERO" => AddPrototypeHero(),
+            "REMOVE_PROTOTYPE_HERO" => RemovePrototypeHero(),
             "FIX_EQUIPPED_DUPES" => FixEquippedItemDuplicates(),
             "REPAIR_EQUIPPED_DUPES" => RepairEquippedItemDuplicates(),
             "RESTORE_HEROES" => RestorePersistentHeroes(),
@@ -522,6 +526,73 @@ internal sealed class ModActions
     public string UnlockHeroesOnly()
     {
         return RestorePersistentHeroes();
+    }
+
+    public string AddPrototypeHero()
+    {
+        lock (_sync)
+        {
+            try
+            {
+                AttachIl2CppThread();
+                var save = GetSaveData();
+                var data = GetDataManager();
+                if (data?.heroInfoData == null)
+                {
+                    return "No pude crear prototipo: catalogo de heroes no listo. Entra en partida y pulsa Refresh.";
+                }
+
+                if (save != null && IsSuspiciousFreshSave(save))
+                {
+                    return "Bloqueado por seguridad: el save parece incompleto, no aplico prototipo.";
+                }
+
+                var sourceInfo = FindHeroInfoByKey(data.heroInfoData, PrototypeHeroSourceKey);
+                if (!IsValid(sourceInfo))
+                {
+                    return $"No pude crear prototipo: no encontre heroe base key={PrototypeHeroSourceKey}.";
+                }
+
+                int catalogChanged = EnsurePrototypeHeroCatalog(data, sourceInfo);
+                var runtime = global::uz.tx.isk(PrototypeHeroKey);
+                string runtimeStatus = IsValid(runtime)
+                    ? $"runtime OK key={runtime.bsok} class={runtime.bsny}"
+                    : "runtime no visible aun";
+                string status = $"Prototype hero runtime: key {PrototypeHeroKey} clonado de {sourceInfo.HeroKey}:{sourceInfo.ClassType}, catalogo {catalogChanged} ({runtimeStatus}). No guarda, no toca formacion, no toca items y se pierde al reiniciar. {DescribeHeroCatalog()}";
+                Plugin.FileLog(status);
+                return status;
+            }
+            catch (Exception ex)
+            {
+                return Fail("Prototype hero fallo", ex);
+            }
+        }
+    }
+
+    public string RemovePrototypeHero()
+    {
+        lock (_sync)
+        {
+            try
+            {
+                AttachIl2CppThread();
+                var save = GetSaveData();
+                if (save != null && IsSuspiciousFreshSave(save))
+                {
+                    return "Bloqueado por seguridad: el save parece incompleto, no elimino prototipo.";
+                }
+
+                int formationRemoved = RemoveHeroFromFormation(save, PrototypeHeroKey);
+                int catalogRemoved = RemovePrototypeHeroCatalog();
+                string status = $"Prototype hero eliminado de runtime: formacion {formationRemoved}, catalogo {catalogRemoved}. No guarda y no toca items/stash. {DescribeHeroCatalog()}";
+                Plugin.FileLog(status);
+                return status;
+            }
+            catch (Exception ex)
+            {
+                return Fail("Remove prototype hero fallo", ex);
+            }
+        }
     }
 
     public string RestorePersistentHeroes()
@@ -3546,7 +3617,7 @@ internal sealed class ModActions
         return null;
     }
 
-    private static bool IsValid(Il2CppObjectBase obj)
+    internal static bool IsValid(Il2CppObjectBase obj)
     {
         return obj != null && obj.Pointer != IntPtr.Zero;
     }
@@ -4030,6 +4101,160 @@ internal sealed class ModActions
         return builder.Length == 0
             ? $"Catalogo heroes {heroInfos.Count} sin entradas visibles."
             : $"Catalogo heroes {heroInfos.Count}: {builder}.";
+    }
+
+    internal static bool IsPrototypeHeroKey(int heroKey)
+    {
+        return heroKey == PrototypeHeroKey;
+    }
+
+    internal static int GetPrototypeHeroSourceKey()
+    {
+        return PrototypeHeroSourceKey;
+    }
+
+    internal static global::TaskbarHero.Data.HeroInfoData GetPrototypeHeroInfoForPatch()
+    {
+        try
+        {
+            return FindHeroInfoByKey(GetDataManager()?.heroInfoData, PrototypeHeroKey);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static int EnsurePrototypeHeroCatalog(
+        global::bam data,
+        global::TaskbarHero.Data.HeroInfoData sourceInfo)
+    {
+        if (data?.heroInfoData == null || !IsValid(sourceInfo))
+        {
+            return 0;
+        }
+
+        var existing = FindHeroInfoByKey(data.heroInfoData, PrototypeHeroKey);
+        if (IsValid(existing))
+        {
+            CopyHeroInfo(sourceInfo, existing, PrototypeHeroKey);
+            return 0;
+        }
+
+        var clone = new global::TaskbarHero.Data.HeroInfoData();
+        CopyHeroInfo(sourceInfo, clone, PrototypeHeroKey);
+        data.heroInfoData.Add(clone);
+        Plugin.FileLog($"Prototype hero catalog added key={PrototypeHeroKey} source={sourceInfo.HeroKey} class={sourceInfo.ClassType}");
+        return 1;
+    }
+
+    private static int RemovePrototypeHeroCatalog()
+    {
+        var heroInfos = GetDataManager()?.heroInfoData;
+        if (heroInfos == null)
+        {
+            return 0;
+        }
+
+        int removed = 0;
+        for (int i = heroInfos.Count - 1; i >= 0; i--)
+        {
+            var info = heroInfos[i];
+            if (IsValid(info) && info.HeroKey == PrototypeHeroKey)
+            {
+                heroInfos.RemoveAt(i);
+                removed++;
+            }
+        }
+
+        return removed;
+    }
+
+    private static void CopyHeroInfo(
+        global::TaskbarHero.Data.HeroInfoData source,
+        global::TaskbarHero.Data.HeroInfoData target,
+        int targetHeroKey)
+    {
+        target.HeroKey = targetHeroKey;
+        target.HeroNameKey = source.HeroNameKey;
+        target.DescriptionKey = source.DescriptionKey;
+        target.ClassType = source.ClassType;
+        target.MainWeaponGearType = source.MainWeaponGearType;
+        target.SubWeaponGearType = source.SubWeaponGearType;
+        target.SkillKey = source.SkillKey;
+        target.AttackDamage = Math.Max(source.AttackDamage, source.AttackDamage * 2);
+        target.AttackSpeed = source.AttackSpeed;
+        target.CastSpeed = source.CastSpeed;
+        target.CriticalChance = source.CriticalChance;
+        target.CriticalDamage = source.CriticalDamage;
+        target.CooldownReduction = source.CooldownReduction;
+        target.MaxHp = Math.Max(source.MaxHp, source.MaxHp * 2);
+        target.Armor = Math.Max(source.Armor, source.Armor * 2);
+        target.MovementSpeed = source.MovementSpeed;
+        target.UnlockCost = 0;
+        target.IsAvailable = true;
+        target.IsFirstAvailable = true;
+        target.SelectSoundKey = source.SelectSoundKey;
+        target.DeadSoundKey = source.DeadSoundKey;
+        target.IconPath = source.IconPath;
+        target.DeadIconPath = source.DeadIconPath;
+        target.PrefabPath = source.PrefabPath;
+        target.AnimatorPath = source.AnimatorPath;
+        target.DLCAppId = 0;
+        target.DLCBitIndex = 0;
+        target.HasDLCDrop = false;
+    }
+
+    private static global::TaskbarHero.Data.HeroInfoData FindHeroInfoByKey(
+        Il2CppSystem.Collections.Generic.List<global::TaskbarHero.Data.HeroInfoData> heroInfos,
+        int heroKey)
+    {
+        if (heroInfos == null)
+        {
+            return null;
+        }
+
+        for (int i = 0; i < heroInfos.Count; i++)
+        {
+            var info = heroInfos[i];
+            if (IsValid(info) && info.HeroKey == heroKey)
+            {
+                return info;
+            }
+        }
+
+        return null;
+    }
+
+    private static int RemoveHeroFromFormation(global::TaskbarHero.PlayerSaveData save, int heroKey)
+    {
+        var common = save?.commonSaveData;
+        var arranged = common?.arrangedHeroKey;
+        if (common == null || arranged == null || arranged.Length == 0)
+        {
+            return 0;
+        }
+
+        var filtered = new System.Collections.Generic.List<int>();
+        bool removed = false;
+        for (int i = 0; i < arranged.Length; i++)
+        {
+            if (arranged[i] == heroKey)
+            {
+                removed = true;
+                continue;
+            }
+
+            filtered.Add(arranged[i]);
+        }
+
+        if (!removed)
+        {
+            return 0;
+        }
+
+        common.arrangedHeroKey = BuildIntArray(NormalizeFormationKeys(filtered.ToArray(), save));
+        return 1;
     }
 
     private static global::TaskbarHero.EasySaveData.HeroSaveData FindHeroSaveData(global::TaskbarHero.PlayerSaveData save, int heroKey)
@@ -7125,6 +7350,59 @@ internal static class GodModeHeroDamagePatch
         a.FloatingDamageText = false;
         a.PlayHitFeedBack = false;
         return false;
+    }
+}
+
+[HarmonyPatch(typeof(global::bam), "mdq")]
+internal static class PrototypeHeroDataLookupPatch
+{
+    private static void Postfix(int a, ref global::TaskbarHero.Data.HeroInfoData __result)
+    {
+        if (!ModActions.IsPrototypeHeroKey(a) || ModActions.IsValid(__result))
+        {
+            return;
+        }
+
+        var prototype = ModActions.GetPrototypeHeroInfoForPatch();
+        if (ModActions.IsValid(prototype))
+        {
+            __result = prototype;
+        }
+    }
+}
+
+[HarmonyPatch(typeof(global::bam), "ikb")]
+internal static class PrototypeHeroLegacyDataLookupPatch
+{
+    private static void Postfix(int a, ref global::TaskbarHero.Data.HeroInfoData __result)
+    {
+        if (!ModActions.IsPrototypeHeroKey(a) || ModActions.IsValid(__result))
+        {
+            return;
+        }
+
+        var prototype = ModActions.GetPrototypeHeroInfoForPatch();
+        if (ModActions.IsValid(prototype))
+        {
+            __result = prototype;
+        }
+    }
+}
+
+[HarmonyPatch(typeof(global::TaskbarHero.Data.ScriptableObjectDataContainer), nameof(global::TaskbarHero.Data.ScriptableObjectDataContainer.mhi))]
+internal static class PrototypeHeroLoadDataPatch
+{
+    private static void Postfix(
+        global::TaskbarHero.Data.ScriptableObjectDataContainer __instance,
+        int a,
+        ref global::TaskbarHero.Data.HeroLoadData __result)
+    {
+        if (!ModActions.IsPrototypeHeroKey(a) || ModActions.IsValid(__result) || !ModActions.IsValid(__instance))
+        {
+            return;
+        }
+
+        __result = __instance.mhi(ModActions.GetPrototypeHeroSourceKey());
     }
 }
 

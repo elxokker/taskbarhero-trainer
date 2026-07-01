@@ -54,6 +54,8 @@ internal sealed class TrainerForm : Form
     private readonly Button _petsButton;
     private readonly Button _skillPointsZeroButton;
     private readonly Button _skillPointsMaxButton;
+    private readonly Button _prototypeHeroButton;
+    private readonly Button _removePrototypeHeroButton;
     private readonly Button _bestKnightGearButton;
     private readonly Button _bestRangerGearButton;
     private readonly Button _bestSorcererGearButton;
@@ -86,8 +88,8 @@ internal sealed class TrainerForm : Form
     {
         Text = $"TaskbarHero Trainer {TrainerVersion}";
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(740, 900);
-        Size = new Size(760, 1010);
+        MinimumSize = new Size(740, 940);
+        Size = new Size(760, 1050);
         Font = new Font("Segoe UI", 9F);
         BackColor = WindowBackColor;
         ForeColor = TextColor;
@@ -104,7 +106,7 @@ internal sealed class TrainerForm : Form
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 82F));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 78F));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 150F));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 188F));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 114F));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 258F));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 142F));
@@ -167,12 +169,15 @@ internal sealed class TrainerForm : Form
         _petsButton = CreateButton("Unlock all pets", () => SendCommand("PETS"));
         _skillPointsZeroButton = CreateButton("Skill pts 0", () => SendCommand("SKILL_POINTS_0"));
         _skillPointsMaxButton = CreateButton("Skill pts 999", () => SendCommand("SKILL_POINTS_999"));
+        _prototypeHeroButton = CreateButton("Prototype hero", () => SendCommand("PROTOTYPE_HERO"));
+        _removePrototypeHeroButton = CreateButton("Remove prototype", () => SendCommand("REMOVE_PROTOTYPE_HERO"));
         root.Controls.Add(BuildSection(
             "Cuenta y progreso",
             BuildTwoColumnRows(
                 (_currencyButton, _heroesButton),
                 (_unlockSlotsButton, _petsButton),
-                (_skillPointsZeroButton, _skillPointsMaxButton))), 0, 2);
+                (_skillPointsZeroButton, _skillPointsMaxButton),
+                (_prototypeHeroButton, _removePrototypeHeroButton))), 0, 2);
 
         _listItemKeysButton = CreateButton("List useful item keys", () => SendCommand("LIST_ITEM_KEYS"));
 
@@ -537,6 +542,8 @@ internal sealed class TrainerForm : Form
             _petsButton,
             _skillPointsZeroButton,
             _skillPointsMaxButton,
+            _prototypeHeroButton,
+            _removePrototypeHeroButton,
             _bestKnightGearButton,
             _bestRangerGearButton,
             _bestSorcererGearButton,

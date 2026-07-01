@@ -5,6 +5,7 @@ obj/
 *.user
 *.suo
 *.zip
+artifacts/
 TaskbarHeroTrainer-v*/
 bepinex_payload/
 TaskbarHeroTrainer_Backup_*/
