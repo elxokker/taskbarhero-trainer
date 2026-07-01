@@ -525,24 +525,8 @@ internal sealed class ModActions
             {
                 if (enabled)
                 {
-                    _fastChestDropForces = 0;
-                    _fastChestCooldownExpirations = 0;
-                    _fastChestCooldownUpdates = 0;
-                    _fastChestChanceInputUpdates = 0;
-                    _fastChestStageBoxKeyFixes = 0;
-                    _fastChestStatusMainThreadUpdates = 0;
-                    _fastChestNoStageBoxKeySkips = 0;
-                    _fastChestEligibleStageBoxAttempts = 0;
-                    _fastChestChanceResultObservations = 0;
-                    _fastChestRequestObservations = 0;
-                    ResetFastChestCooldownWindow();
-                    _fastChestDropsEnabled = true;
-                    FastChestDropsEnabled = true;
-                    FastChestStatBoostEnabled = true;
-                    int cleanedDead = RemoveDeadStageBoxRuntimeEntries(global::TaskbarHero.EBoxType.NORMAL, "al activar chest boost") +
-                                      RemoveDeadStageBoxRuntimeEntries(global::TaskbarHero.EBoxType.BOSS, "al activar chest boost");
-                    string status = ApplyChestDropAccountStatusBoost(true);
-                    status += $" Bonus de runas/cofres se sincroniza en hilo Unity durante StageManager.ihu; cooldown NORMAL objetivo {FastChestDropIntervalSeconds}s via StageManager.bdlr/unscaledTime; probabilidad de entrada NORMAL {FastChestDropChanceInput.ToString("0", CultureInfo.InvariantCulture)}%; sin forzar ihv/iuf ni llamar izd directo; cofres runtime huerfanos limpiados {cleanedDead}.";
+                    StopChestTimerLocked();
+                    string status = "Chest drop boost desactivado temporalmente: se ha dejado la ruta de cofres vanilla para restaurar la apertura normal. No se toca cooldown, probabilidad, request, open, exchange ni add item.";
                     Plugin.FileLog(status);
                     return status;
                 }
@@ -10170,16 +10154,7 @@ internal static class TrainerFastNormalChestDropPatch
 {
     private static IEnumerable<MethodBase> TargetMethods()
     {
-        var method = AccessTools.Method(
-            typeof(global::TaskbarHero.StageManager),
-            "ihv",
-            new[] { typeof(global::TaskbarHero.EBoxType) });
-
-        if (method != null)
-        {
-            Plugin.FileLog("Fast chest ihv patch target: " + method.FullDescription());
-            yield return method;
-        }
+        yield break;
     }
 
     private static void Postfix(global::TaskbarHero.EBoxType a, ref bool __result)
@@ -10193,22 +10168,7 @@ internal static class TrainerFastStageChestDropPatch
 {
     private static IEnumerable<MethodBase> TargetMethods()
     {
-        var method = AccessTools.Method(
-            typeof(global::TaskbarHero.StageManager),
-            "ihu",
-            new[]
-            {
-                typeof(int),
-                typeof(global::TaskbarHero.Data.EStageType),
-                typeof(int),
-                typeof(float),
-                typeof(global::TaskbarHero.Data.EMonsterType)
-            });
-
-        if (method != null)
-        {
-            yield return method;
-        }
+        yield break;
     }
 
     private static void Prefix(
@@ -10230,15 +10190,7 @@ internal static class TrainerFastStageChestCooldownSetPatch
 {
     private static IEnumerable<MethodBase> TargetMethods()
     {
-        var method = AccessTools.Method(
-            typeof(global::TaskbarHero.StageManager),
-            "ihw",
-            new[] { typeof(global::TaskbarHero.EBoxType), typeof(int) });
-
-        if (method != null)
-        {
-            yield return method;
-        }
+        yield break;
     }
 
     private static void Postfix(global::TaskbarHero.StageManager __instance, global::TaskbarHero.EBoxType a, int b)
@@ -10291,29 +10243,7 @@ internal static class TrainerStageBoxOpenTracePatch
 {
     private static IEnumerable<MethodBase> TargetMethods()
     {
-        foreach (string name in new[] { "irs", "cqn", "dxb", "kml" })
-        {
-            var method = AccessTools.Method(
-                typeof(global::uz.tv),
-                name,
-                new[]
-                {
-                    typeof(global::TaskbarHero.EBoxType),
-                    typeof(Il2CppSystem.Action<global::TaskbarHero.BoxData>),
-                    typeof(global::uz.ty.WillRemoveBoxData),
-                    typeof(global::uz.uc.ua)
-                });
-
-            if (method != null)
-            {
-                Plugin.FileLog("Fast chest open trace patch target: " + method.FullDescription());
-                yield return method;
-            }
-            else
-            {
-                Plugin.FileLog("Fast chest open trace patch target not found: uz.tv." + name);
-            }
-        }
+        yield break;
     }
 
     private static void Prefix(global::TaskbarHero.EBoxType a, Il2CppSystem.Action<global::TaskbarHero.BoxData> b, global::uz.ty.WillRemoveBoxData c, global::uz.uc.ua d)
@@ -10353,20 +10283,7 @@ internal static class TrainerStageBoxAddItemTracePatch
 {
     private static IEnumerable<MethodBase> TargetMethods()
     {
-        var method = AccessTools.Method(
-            typeof(global::uz.uc),
-            "fzn",
-            new[] { typeof(int), typeof(ulong), typeof(int), typeof(bool) });
-
-        if (method != null)
-        {
-            Plugin.FileLog("Fast chest add item trace patch target: " + method.FullDescription());
-            yield return method;
-        }
-        else
-        {
-            Plugin.FileLog("Fast chest add item trace patch target not found: uz.uc.fzn");
-        }
+        yield break;
     }
 
     private static void Postfix(int a, ulong b, int c, bool d, ref global::TaskbarHero.AddItemResult __result)
@@ -10380,20 +10297,7 @@ internal static class TrainerStageBoxExchangeResultTracePatch
 {
     private static IEnumerable<MethodBase> TargetMethods()
     {
-        foreach (var method in AccessTools.GetDeclaredMethods(typeof(global::uz.tv)))
-        {
-            if (method == null || method.ReturnType != typeof(void))
-            {
-                continue;
-            }
-
-            var parameters = method.GetParameters();
-            if (parameters.Length == 1 && parameters[0].ParameterType == typeof(global::TaskbarHero.InventoryExchangeResult))
-            {
-                Plugin.FileLog("Fast chest exchange result trace patch target: " + method.FullDescription());
-                yield return method;
-            }
-        }
+        yield break;
     }
 
     private static void Prefix(global::TaskbarHero.InventoryExchangeResult a)
@@ -10407,22 +10311,7 @@ internal static class TrainerFastChestRequestTracePatch
 {
     private static IEnumerable<MethodBase> TargetMethods()
     {
-        foreach (var method in AccessTools.GetDeclaredMethods(typeof(global::uz.uc)))
-        {
-            if (!string.Equals(method.Name, "izd", StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            var parameters = method.GetParameters();
-            if (parameters.Length != 2 || parameters[0].ParameterType != typeof(int))
-            {
-                continue;
-            }
-
-            Plugin.FileLog("Fast chest request trace patch target: " + method.FullDescription());
-            yield return method;
-        }
+        yield break;
     }
 
     private static void Prefix(int a, ref Il2CppSystem.Action<int> b)
@@ -10456,16 +10345,7 @@ internal static class TrainerFastChestCanAddBoxPatch
 {
     private static IEnumerable<MethodBase> TargetMethods()
     {
-        var method = AccessTools.Method(
-            typeof(global::uz.ty),
-            "iuf",
-            new[] { typeof(global::TaskbarHero.EBoxType) });
-
-        if (method != null)
-        {
-            Plugin.FileLog("Fast chest can-add patch target: " + method.FullDescription());
-            yield return method;
-        }
+        yield break;
     }
 
     private static void Postfix(global::TaskbarHero.EBoxType a, ref bool __result)
@@ -10495,27 +10375,7 @@ internal static class TrainerFastChestChanceResultPatch
 {
     private static IEnumerable<MethodBase> TargetMethods()
     {
-        var normal = AccessTools.Method(typeof(global::yw), "kow", new[] { typeof(float) });
-        if (normal != null)
-        {
-            Plugin.FileLog("Fast chest chance patch target: " + normal.FullDescription());
-            yield return normal;
-        }
-        else
-        {
-            Plugin.FileLog("Fast chest chance patch target yw.kow not found.");
-        }
-
-        var boss = AccessTools.Method(typeof(global::yw), "kox", new[] { typeof(float) });
-        if (boss != null)
-        {
-            Plugin.FileLog("Fast chest chance patch target: " + boss.FullDescription());
-            yield return boss;
-        }
-        else
-        {
-            Plugin.FileLog("Fast chest chance patch target yw.kox not found.");
-        }
+        yield break;
     }
 
     private static void Postfix(MethodBase __originalMethod, ref float __result)

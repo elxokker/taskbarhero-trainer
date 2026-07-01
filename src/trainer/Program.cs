@@ -213,7 +213,8 @@ internal sealed class TrainerForm : Form
 
         _oneHitToggle = CreateToggle("One hit kill: OFF");
         _oneHitToggle.CheckedChanged += (_, _) => ToggleOneHitKill();
-        _chestBoostToggle = CreateToggle("Chest drop boost: OFF");
+        _chestBoostToggle = CreateToggle("Chest boost disabled");
+        _chestBoostToggle.Enabled = false;
         _chestBoostToggle.CheckedChanged += (_, _) => ToggleChestBoost();
 
         _gameSpeedLabel = new Label
@@ -560,6 +561,10 @@ internal sealed class TrainerForm : Form
         {
             control.Enabled = true;
         }
+
+        _chestBoostToggle.Checked = false;
+        _chestBoostToggle.Text = "Chest boost disabled";
+        _chestBoostToggle.Enabled = false;
     }
 
     private void SendCommand(string command)
@@ -600,6 +605,13 @@ internal sealed class TrainerForm : Form
 
     private void ToggleChestBoost()
     {
+        if (!_chestBoostToggle.Enabled)
+        {
+            _chestBoostToggle.Checked = false;
+            _chestBoostToggle.Text = "Chest boost disabled";
+            return;
+        }
+
         bool enabled = _chestBoostToggle.Checked;
         _chestBoostToggle.Text = enabled ? "Chest drop boost: ON" : "Chest drop boost: OFF";
         SendCommand(enabled ? "FAST_CHESTS:ON" : "FAST_CHESTS:OFF");
