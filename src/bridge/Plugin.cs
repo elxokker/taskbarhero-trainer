@@ -1276,15 +1276,42 @@ internal sealed class ModActions
                 return "Bonus de ataque de heroes pendiente: AccountStatus no listo. " + lookupDetail;
             }
 
-            int bonus = speed <= 1f + GameSpeedEpsilon
-                ? 0
-                : Math.Clamp((int)Math.Round((speed - 1f) * 100f), 0, 900);
+            float overSpeed = Math.Max(0f, speed - 1f);
+            int attackSpeedBonus = Math.Clamp((int)Math.Round(overSpeed * 250f), 0, 5000);
+            int attackDamagePercentBonus = Math.Clamp((int)Math.Round(overSpeed * 250f), 0, 5000);
+            int armorPercentBonus = Math.Clamp((int)Math.Round(overSpeed * 500f), 0, 10000);
+            int flatAttackDamageBonus = Math.Clamp((int)Math.Round(overSpeed * 50_000f), 0, 2_000_000);
+            int flatArmorBonus = Math.Clamp((int)Math.Round(overSpeed * 250_000f), 0, 10_000_000);
 
-            SetAccountStatusContribution(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.AllHeroAttackSpeed, bonus, GameSpeedStatusBoostSource);
-            int after = ReadAccountStatus(accountStatusManager, global::TaskbarHero.StatusSystem.EAccountStatus.AllHeroAttackSpeed);
-            return bonus > 0
-                ? $"Bonus runtime heroes: AllHeroAttackSpeed +{bonus}% aplicado; total actual {after}."
-                : $"Bonus runtime heroes limpiado: AllHeroAttackSpeed total actual {after}.";
+            var bonuses = new (global::TaskbarHero.StatusSystem.EAccountStatus Status, int Value)[]
+            {
+                (global::TaskbarHero.StatusSystem.EAccountStatus.AllHeroAttackSpeed, attackSpeedBonus),
+                (global::TaskbarHero.StatusSystem.EAccountStatus.AllHeroAttackDamagePercent, attackDamagePercentBonus),
+                (global::TaskbarHero.StatusSystem.EAccountStatus.AllHeroAttackDamage, flatAttackDamageBonus),
+                (global::TaskbarHero.StatusSystem.EAccountStatus.AllHeroArmorPercent, armorPercentBonus),
+                (global::TaskbarHero.StatusSystem.EAccountStatus.AllHeroArmor, flatArmorBonus)
+            };
+
+            var summary = new StringBuilder();
+            for (int i = 0; i < bonuses.Length; i++)
+            {
+                SetAccountStatusContribution(accountStatusManager, bonuses[i].Status, bonuses[i].Value, GameSpeedStatusBoostSource);
+                int after = ReadAccountStatus(accountStatusManager, bonuses[i].Status);
+                if (summary.Length > 0)
+                {
+                    summary.Append("; ");
+                }
+
+                summary.Append(bonuses[i].Status)
+                    .Append(" +")
+                    .Append(bonuses[i].Value)
+                    .Append(" total ")
+                    .Append(after);
+            }
+
+            return overSpeed > GameSpeedEpsilon
+                ? $"Modo seguro heroes aplicado: {summary}."
+                : $"Modo seguro heroes limpiado: {summary}.";
         }
         catch (Exception ex)
         {
