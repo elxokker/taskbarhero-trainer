@@ -67,7 +67,6 @@ internal sealed class TrainerForm : Form
     private readonly Button _hunterGemsButton;
     private readonly Button _slayerGemsButton;
     private readonly CheckBox _oneHitToggle;
-    private readonly CheckBox _chestBoostToggle;
     private readonly Button _repairEquippedDupesButton;
     private readonly Label _gameSpeedLabel;
     private readonly TrackBar _gameSpeedTrackBar;
@@ -213,13 +212,10 @@ internal sealed class TrainerForm : Form
 
         _oneHitToggle = CreateToggle("One hit kill: OFF");
         _oneHitToggle.CheckedChanged += (_, _) => ToggleOneHitKill();
-        _chestBoostToggle = CreateToggle("Chest boost disabled");
-        _chestBoostToggle.Enabled = false;
-        _chestBoostToggle.CheckedChanged += (_, _) => ToggleChestBoost();
 
         _gameSpeedLabel = new Label
         {
-            Text = "Game speed: 1.0x",
+            Text = "Game/combat speed: 1.0x",
             AutoSize = true,
             ForeColor = MutedTextColor,
             Anchor = AnchorStyles.Left
@@ -398,7 +394,7 @@ internal sealed class TrainerForm : Form
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         panel.RowStyles.Add(new RowStyle(SizeType.Absolute, ButtonHeight + 8));
         panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-        AddGridControl(panel, BuildTwoColumnRows((_oneHitToggle, _chestBoostToggle)), 0, 0);
+        AddGridControl(panel, _oneHitToggle, 0, 0);
         AddGridControl(panel, BuildSpeedPanel(), 0, 1);
         return panel;
     }
@@ -552,7 +548,6 @@ internal sealed class TrainerForm : Form
             _slayerGemsButton,
             _repairEquippedDupesButton,
             _oneHitToggle,
-            _chestBoostToggle,
             _gameSpeedTrackBar,
             _gameSpeedResetButton,
             _addItemButton,
@@ -561,10 +556,6 @@ internal sealed class TrainerForm : Form
         {
             control.Enabled = true;
         }
-
-        _chestBoostToggle.Checked = false;
-        _chestBoostToggle.Text = "Chest boost disabled";
-        _chestBoostToggle.Enabled = false;
     }
 
     private void SendCommand(string command)
@@ -603,23 +594,9 @@ internal sealed class TrainerForm : Form
         SendCommand(enabled ? "ONE_HIT:ON" : "ONE_HIT:OFF");
     }
 
-    private void ToggleChestBoost()
-    {
-        if (!_chestBoostToggle.Enabled)
-        {
-            _chestBoostToggle.Checked = false;
-            _chestBoostToggle.Text = "Chest boost disabled";
-            return;
-        }
-
-        bool enabled = _chestBoostToggle.Checked;
-        _chestBoostToggle.Text = enabled ? "Chest drop boost: ON" : "Chest drop boost: OFF";
-        SendCommand(enabled ? "FAST_CHESTS:ON" : "FAST_CHESTS:OFF");
-    }
-
     private void UpdateGameSpeedLabel()
     {
-        _gameSpeedLabel.Text = $"Game speed: {GetSelectedGameSpeed().ToString("0.0", CultureInfo.InvariantCulture)}x";
+        _gameSpeedLabel.Text = $"Game/combat speed: {GetSelectedGameSpeed().ToString("0.0", CultureInfo.InvariantCulture)}x";
     }
 
     private float GetSelectedGameSpeed()
