@@ -3648,10 +3648,6 @@ internal sealed class ModActions
             ulong uniqueId = willRemoveBoxData.BoxUniqueId;
             var box = TryFindStageBoxByUniqueId(uniqueId);
             Plugin.FileLog($"Fast chest open: type={boxType}, uid={uniqueId}, runtimeQty={GetRuntimeBoxQuantity(uniqueId)}, box=[{DescribeBoxData(box)}], item=[{DescribeRuntimeItem(itemCache)}].");
-            if (!IsValid(box) && GetRuntimeBoxQuantity(uniqueId) > 0)
-            {
-                RemoveDeadStageBoxRuntime(boxType, uniqueId, "open trace sin BoxData");
-            }
         }
         catch (Exception ex)
         {
