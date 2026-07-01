@@ -236,6 +236,9 @@ internal sealed class ModActions
     private static readonly int[] DefaultPersistentHeroFormation = { 101, 601, 501 };
     private static readonly object SessionChestSync = new();
     private static readonly HashSet<ulong> SessionChestIds = new();
+    private static readonly object StageBoxOpenTraceSync = new();
+    private static readonly HashSet<ulong> StageBoxOpenCompletedIds = new();
+    private static readonly Dictionary<ulong, int> StageBoxOpenNullCounts = new();
     private static readonly object ChestStatusBoostSync = new();
     private static readonly object FastChestCooldownSync = new();
     private static readonly Lazy<MethodInfo> StageManagerSetBoxCooldownMethod = new(() => AccessTools.Method(typeof(global::TaskbarHero.StageManager), "ihw"));
@@ -3686,7 +3689,7 @@ internal sealed class ModActions
 
     internal static void TraceStageBoxOpen(global::TaskbarHero.EBoxType boxType, global::uz.ty.WillRemoveBoxData willRemoveBoxData, global::uz.uc.ua itemCache)
     {
-        if (Plugin.IsShuttingDown || IsGameQuitting || boxType != global::TaskbarHero.EBoxType.NORMAL)
+        if (Plugin.IsShuttingDown || IsGameQuitting || !IsFastChestBoxType(boxType))
         {
             return;
         }
@@ -3695,11 +3698,80 @@ internal sealed class ModActions
         {
             ulong uniqueId = willRemoveBoxData.BoxUniqueId;
             var box = TryFindStageBoxByUniqueId(uniqueId);
-            Plugin.FileLog($"Fast chest open: type={boxType}, uid={uniqueId}, runtimeQty={GetRuntimeBoxQuantity(uniqueId)}, box=[{DescribeBoxData(box)}], item=[{DescribeRuntimeItem(itemCache)}].");
+            int runtimeQuantity = GetRuntimeBoxQuantity(uniqueId);
+            Plugin.FileLog($"Fast chest open: type={boxType}, uid={uniqueId}, runtimeQty={runtimeQuantity}, box=[{DescribeBoxData(box)}], item=[{DescribeRuntimeItem(itemCache)}].");
+
+            if (IsValid(box))
+            {
+                TrackStageBoxOpenTrace(uniqueId, ReadBoxIsGet(box) && HasValidBoxReward(box));
+                return;
+            }
+
+            if (runtimeQuantity > 0 && ShouldCleanCompletedOpenTrace(uniqueId))
+            {
+                RemoveDeadStageBoxRuntime(boxType, uniqueId, "open trace post-get sin BoxData");
+                ClearStageBoxOpenTrace(uniqueId);
+            }
         }
         catch (Exception ex)
         {
             Plugin.FileLog("Fast chest open trace failed: " + ex.Message);
+        }
+    }
+
+    private static void TrackStageBoxOpenTrace(ulong uniqueId, bool completed)
+    {
+        if (uniqueId == 0UL)
+        {
+            return;
+        }
+
+        lock (StageBoxOpenTraceSync)
+        {
+            StageBoxOpenNullCounts.Remove(uniqueId);
+            if (completed)
+            {
+                StageBoxOpenCompletedIds.Add(uniqueId);
+            }
+            else
+            {
+                StageBoxOpenCompletedIds.Remove(uniqueId);
+            }
+        }
+    }
+
+    private static bool ShouldCleanCompletedOpenTrace(ulong uniqueId)
+    {
+        if (uniqueId == 0UL)
+        {
+            return false;
+        }
+
+        lock (StageBoxOpenTraceSync)
+        {
+            if (!StageBoxOpenCompletedIds.Contains(uniqueId))
+            {
+                return false;
+            }
+
+            StageBoxOpenNullCounts.TryGetValue(uniqueId, out int count);
+            count++;
+            StageBoxOpenNullCounts[uniqueId] = count;
+            return count >= 1;
+        }
+    }
+
+    private static void ClearStageBoxOpenTrace(ulong uniqueId)
+    {
+        if (uniqueId == 0UL)
+        {
+            return;
+        }
+
+        lock (StageBoxOpenTraceSync)
+        {
+            StageBoxOpenCompletedIds.Remove(uniqueId);
+            StageBoxOpenNullCounts.Remove(uniqueId);
         }
     }
 
