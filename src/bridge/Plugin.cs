@@ -554,11 +554,20 @@ internal sealed class ModActions
                 }
 
                 int catalogChanged = EnsurePrototypeHeroCatalog(data, sourceInfo);
+                var prototypeInfo = FindHeroInfoByKey(data.heroInfoData, PrototypeHeroKey);
+                if (!IsValid(prototypeInfo))
+                {
+                    return "No pude crear prototipo: el clon de catalogo no quedo disponible.";
+                }
+
+                var prototypeSave = CreateTransientPrototypeHeroSaveData();
+                var prototypeRuntime = new global::vb(prototypeSave, prototypeInfo);
+                int runtimeChanged = UpsertRuntimeHeroCache(PrototypeHeroKey, prototypeRuntime);
                 var runtime = global::uz.tx.isk(PrototypeHeroKey);
                 string runtimeStatus = IsValid(runtime)
-                    ? $"runtime OK key={runtime.bsok} class={runtime.bsny}"
+                    ? $"runtime OK key={runtime.bsok} class={runtime.bsny} level={runtime.bsof}"
                     : "runtime no visible aun";
-                string status = $"Prototype hero runtime: key {PrototypeHeroKey} clonado de {sourceInfo.HeroKey}:{sourceInfo.ClassType}, catalogo {catalogChanged} ({runtimeStatus}). No guarda, no toca formacion, no toca items y se pierde al reiniciar. {DescribeHeroCatalog()}";
+                string status = $"Prototype hero runtime: key {PrototypeHeroKey} clonado de {sourceInfo.HeroKey}:{sourceInfo.ClassType}, catalogo {catalogChanged}, cache {runtimeChanged} ({runtimeStatus}). No guarda, no toca formacion, no toca items y se pierde al reiniciar. {DescribeHeroCatalog()}";
                 Plugin.FileLog(status);
                 return status;
             }
@@ -582,9 +591,10 @@ internal sealed class ModActions
                     return "Bloqueado por seguridad: el save parece incompleto, no elimino prototipo.";
                 }
 
+                int runtimeRemoved = RemoveRuntimeHeroCache(PrototypeHeroKey);
                 int formationRemoved = RemoveHeroFromFormation(save, PrototypeHeroKey);
                 int catalogRemoved = RemovePrototypeHeroCatalog();
-                string status = $"Prototype hero eliminado de runtime: formacion {formationRemoved}, catalogo {catalogRemoved}. No guarda y no toca items/stash. {DescribeHeroCatalog()}";
+                string status = $"Prototype hero eliminado de runtime: cache {runtimeRemoved}, formacion {formationRemoved}, catalogo {catalogRemoved}. No guarda y no toca items/stash. {DescribeHeroCatalog()}";
                 Plugin.FileLog(status);
                 return status;
             }
@@ -4168,6 +4178,68 @@ internal sealed class ModActions
         }
 
         return removed;
+    }
+
+    private static global::TaskbarHero.EasySaveData.HeroSaveData CreateTransientPrototypeHeroSaveData()
+    {
+        var hero = new global::TaskbarHero.EasySaveData.HeroSaveData(PrototypeHeroKey)
+        {
+            HeroLevel = GetTargetHeroLevel(),
+            IsUnLock = true,
+            HeroExp = 0f,
+            AbilityPoint = 0,
+            AllocatedHeroAbilityPoint = 0
+        };
+
+        return hero;
+    }
+
+    private static int UpsertRuntimeHeroCache(int heroKey, global::vb heroRuntime)
+    {
+        if (!IsValid(heroRuntime))
+        {
+            return 0;
+        }
+
+        try
+        {
+            var dictionary = global::uz.tx.berc;
+            if (dictionary == null)
+            {
+                Plugin.FileLog("Prototype hero runtime cache not found: berc");
+                return 0;
+            }
+
+            dictionary[heroKey] = heroRuntime;
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            Plugin.FileLog("Prototype hero runtime cache upsert failed: " + ex);
+            return 0;
+        }
+    }
+
+    private static int RemoveRuntimeHeroCache(int heroKey)
+    {
+        try
+        {
+            var dictionary = global::uz.tx.berc;
+            if (dictionary == null)
+            {
+                return 0;
+            }
+
+            bool wasVisible = IsValid(global::uz.tx.isk(heroKey));
+            bool removed = dictionary.Remove(heroKey);
+            bool stillVisible = IsValid(global::uz.tx.isk(heroKey));
+            return removed || (wasVisible && !stillVisible) ? 1 : 0;
+        }
+        catch (Exception ex)
+        {
+            Plugin.FileLog("Prototype hero runtime cache remove failed: " + ex);
+            return 0;
+        }
     }
 
     private static void CopyHeroInfo(
