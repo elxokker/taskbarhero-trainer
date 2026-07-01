@@ -23,7 +23,7 @@ public sealed class Plugin : BasePlugin
 {
     public const string PluginGuid = "xoker.taskbarhero.modmenu";
     public const string PluginName = "TaskbarHero Trainer Bridge";
-    public const string PluginVersion = "1.5";
+    public const string PluginVersion = "1.6";
     public const string PipeName = "TaskbarHeroTrainerPipe";
 
     internal static ManualLogSource LogSource;
@@ -228,6 +228,7 @@ internal sealed class ModActions
     };
 
     internal static volatile bool OneHitKillEnabled;
+    internal static volatile bool GodModeEnabled;
     internal static volatile bool ForceHeroUnlockChecks = true;
     internal static volatile bool ForceDlcOwnershipChecks = true;
     private static readonly int[] DefaultPersistentHeroFormation = { 101, 601, 501 };
@@ -251,6 +252,7 @@ internal sealed class ModActions
     {
         IsGameQuitting = true;
         OneHitKillEnabled = false;
+        GodModeEnabled = false;
         _desiredGameSpeed = 1f;
     }
 
@@ -274,6 +276,12 @@ internal sealed class ModActions
         {
             string state = normalized.Substring("ONE_HIT:".Length);
             return SetOneHitKill(state == "ON" || state == "TRUE" || state == "1");
+        }
+
+        if (normalized.StartsWith("GOD_MODE:", StringComparison.Ordinal))
+        {
+            string state = normalized.Substring("GOD_MODE:".Length);
+            return SetGodMode(state == "ON" || state == "TRUE" || state == "1");
         }
 
         if (normalized.StartsWith("HERO_BYPASS:", StringComparison.Ordinal))
@@ -366,6 +374,7 @@ internal sealed class ModActions
             "KNIGHT_COSMIC_SET" => AddBestClassGearSet("Knight"),
             "PETS" => UnlockAllPets(),
             "ONE_HIT" => SetOneHitKill(!OneHitKillEnabled),
+            "GOD_MODE" => SetGodMode(!GodModeEnabled),
             _ => $"Comando no reconocido: {command}"
         };
     }
@@ -921,6 +930,14 @@ internal sealed class ModActions
     {
         OneHitKillEnabled = enabled;
         string status = enabled ? "One hit kill activado." : "One hit kill desactivado.";
+        Plugin.FileLog(status);
+        return status;
+    }
+
+    public string SetGodMode(bool enabled)
+    {
+        GodModeEnabled = enabled;
+        string status = enabled ? "God mode activado." : "God mode desactivado.";
         Plugin.FileLog(status);
         return status;
     }
@@ -7060,6 +7077,24 @@ internal static class OneHitKillMonsterPatch
         a.IsCritical = true;
         a.FloatingDamageText = true;
         a.PlayHitFeedBack = true;
+    }
+}
+
+[HarmonyPatch(typeof(global::TaskbarHero.Hero), nameof(global::TaskbarHero.Hero.gqm))]
+internal static class GodModeHeroDamagePatch
+{
+    private static bool Prefix(ref global::TaskbarHero.DamageInfo a)
+    {
+        if (Plugin.IsShuttingDown || !ModActions.GodModeEnabled || a.OriginDamage <= 0f)
+        {
+            return true;
+        }
+
+        a.OriginDamage = 0f;
+        a.IsCritical = false;
+        a.FloatingDamageText = false;
+        a.PlayHitFeedBack = false;
+        return false;
     }
 }
 

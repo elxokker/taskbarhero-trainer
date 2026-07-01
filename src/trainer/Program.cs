@@ -20,7 +20,7 @@ internal static class Program
 
 internal sealed class TrainerForm : Form
 {
-    private const string TrainerVersion = "1.5";
+    private const string TrainerVersion = "1.6";
     private const string GameProcessName = "TaskBarHero";
     private const string PipeName = "TaskbarHeroTrainerPipe";
     private const int PipeTimeoutMs = 700;
@@ -67,6 +67,7 @@ internal sealed class TrainerForm : Form
     private readonly Button _hunterGemsButton;
     private readonly Button _slayerGemsButton;
     private readonly CheckBox _oneHitToggle;
+    private readonly CheckBox _godModeToggle;
     private readonly Button _repairEquippedDupesButton;
     private readonly Label _gameSpeedLabel;
     private readonly TrackBar _gameSpeedTrackBar;
@@ -212,6 +213,8 @@ internal sealed class TrainerForm : Form
 
         _oneHitToggle = CreateToggle("One hit kill: OFF");
         _oneHitToggle.CheckedChanged += (_, _) => ToggleOneHitKill();
+        _godModeToggle = CreateToggle("God mode: OFF");
+        _godModeToggle.CheckedChanged += (_, _) => ToggleGodMode();
 
         _gameSpeedLabel = new Label
         {
@@ -394,7 +397,7 @@ internal sealed class TrainerForm : Form
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         panel.RowStyles.Add(new RowStyle(SizeType.Absolute, ButtonHeight + 8));
         panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-        AddGridControl(panel, _oneHitToggle, 0, 0);
+        AddGridControl(panel, BuildTwoColumnRows((_oneHitToggle, _godModeToggle)), 0, 0);
         AddGridControl(panel, BuildSpeedPanel(), 0, 1);
         return panel;
     }
@@ -548,6 +551,7 @@ internal sealed class TrainerForm : Form
             _slayerGemsButton,
             _repairEquippedDupesButton,
             _oneHitToggle,
+            _godModeToggle,
             _gameSpeedTrackBar,
             _gameSpeedResetButton,
             _addItemButton,
@@ -592,6 +596,13 @@ internal sealed class TrainerForm : Form
         bool enabled = _oneHitToggle.Checked;
         _oneHitToggle.Text = enabled ? "One hit kill: ON" : "One hit kill: OFF";
         SendCommand(enabled ? "ONE_HIT:ON" : "ONE_HIT:OFF");
+    }
+
+    private void ToggleGodMode()
+    {
+        bool enabled = _godModeToggle.Checked;
+        _godModeToggle.Text = enabled ? "God mode: ON" : "God mode: OFF";
+        SendCommand(enabled ? "GOD_MODE:ON" : "GOD_MODE:OFF");
     }
 
     private void UpdateGameSpeedLabel()

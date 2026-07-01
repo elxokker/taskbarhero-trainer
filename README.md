@@ -3,15 +3,15 @@
 Trainer externo para **TaskbarHero** con bridge BepInEx IL2CPP. No usa hotkeys:
 todo se activa desde la ventana del trainer.
 
-![TaskbarHero Trainer 1.5](docs/taskbarhero-trainer-v1.5.png)
+![TaskbarHero Trainer 1.6](docs/taskbarhero-trainer-v1.6.png)
 
 ## Version actual
 
-**TaskbarHero Trainer 1.5**
+**TaskbarHero Trainer 1.6**
 
 Descarga recomendada:
 
-- [TaskbarHeroTrainer-v1.5.zip](https://github.com/elxokker/taskbarhero-trainer/releases/latest)
+- [TaskbarHeroTrainer-v1.6.zip](https://github.com/elxokker/taskbarhero-trainer/releases/latest)
 
 ## Que incluye
 
@@ -23,6 +23,7 @@ Descarga recomendada:
 - Desbloqueo de mascotas.
 - Ajuste de puntos de habilidad a `0` o `999`.
 - `One hit kill`.
+- `God mode`, bloquea el dano recibido por los heroes.
 - `Game speed` dentro de `Gameplay`, persistente aunque el cambio de stage intente volver a `1.0x`.
 - Creacion de mejor equipo por clase.
 - Gemas + socket por clase sobre equipo equipado.

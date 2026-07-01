@@ -1,4 +1,4 @@
-# TaskbarHero Trainer 1.5 - instalacion y uso
+# TaskbarHero Trainer 1.6 - instalacion y uso
 
 Esta release incluye el trainer externo, el bridge BepInEx IL2CPP y el payload
 necesario para instalarlo en TaskbarHero.
@@ -6,7 +6,7 @@ necesario para instalarlo en TaskbarHero.
 ## Instalacion
 
 1. Cierra TaskbarHero.
-2. Extrae `TaskbarHeroTrainer-v1.5.zip` en una carpeta cualquiera.
+2. Extrae `TaskbarHeroTrainer-v1.6.zip` en una carpeta cualquiera.
 3. Abre PowerShell en esa carpeta.
 4. Ejecuta:
 
@@ -55,6 +55,7 @@ directamente desde Steam, el juego queda normal.
 - `Best <class> gear`: crea el mejor equipo detectado para esa clase.
 - `<class> gems + socket`: aplica gemas al equipo equipado de esa clase.
 - `One hit kill`: activa/desactiva kill rapido.
+- `God mode`: activa/desactiva invulnerabilidad para los heroes.
 - `Game speed`: cambia la velocidad del juego y se reaplica si el cambio de
   stage intenta devolverla a `1.0x`.
 
