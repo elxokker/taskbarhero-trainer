@@ -9,4 +9,5 @@ TaskbarHeroTrainer-v*/
 bepinex_payload/
 TaskbarHeroTrainer_Backup_*/
 TaskbarHeroTrainer_Backups/
+artifacts/
 *.log
