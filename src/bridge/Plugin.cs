@@ -560,14 +560,22 @@ internal sealed class ModActions
                     return "No pude crear prototipo: el clon de catalogo no quedo disponible.";
                 }
 
-                var prototypeSave = CreateTransientPrototypeHeroSaveData();
-                var prototypeRuntime = new global::vb(prototypeSave, prototypeInfo);
-                int runtimeChanged = UpsertRuntimeHeroCache(PrototypeHeroKey, prototypeRuntime);
+                var prototypeSave = EnsureTransientPrototypeHeroSaveData(save);
+                int saveChanged = prototypeSave == null ? 0 : 1;
+                int runtimeChanged = TryRuntimeCall("uz.tx.isj prototype", () => global::uz.tx.isj());
+                var prototypeRuntime = global::uz.tx.isk(PrototypeHeroKey);
+                if (!IsValid(prototypeRuntime))
+                {
+                    prototypeRuntime = new global::vb(prototypeSave, prototypeInfo);
+                    runtimeChanged += UpsertRuntimeHeroCache(PrototypeHeroKey, prototypeRuntime);
+                }
+
+                int uiRefresh = TriggerPrototypeHeroUiRefresh(prototypeRuntime);
                 var runtime = global::uz.tx.isk(PrototypeHeroKey);
                 string runtimeStatus = IsValid(runtime)
                     ? $"runtime OK key={runtime.bsok} class={runtime.bsny} level={runtime.bsof}"
                     : "runtime no visible aun";
-                string status = $"Prototype hero runtime: key {PrototypeHeroKey} clonado de {sourceInfo.HeroKey}:{sourceInfo.ClassType}, catalogo {catalogChanged}, cache {runtimeChanged} ({runtimeStatus}). No guarda, no toca formacion, no toca items y se pierde al reiniciar. {DescribeHeroCatalog()}";
+                string status = $"Prototype hero temporal: key {PrototypeHeroKey} clonado de {sourceInfo.HeroKey}:{sourceInfo.ClassType}, catalogo {catalogChanged}, save-mem {saveChanged}, cache {runtimeChanged}, ui {uiRefresh} ({runtimeStatus}). No se escribe al save y se pierde al reiniciar. Cierra/reabre HERO si no aparece al momento. {DescribeHeroCatalog()}";
                 Plugin.FileLog(status);
                 return status;
             }
@@ -591,10 +599,13 @@ internal sealed class ModActions
                     return "Bloqueado por seguridad: el save parece incompleto, no elimino prototipo.";
                 }
 
-                int runtimeRemoved = RemoveRuntimeHeroCache(PrototypeHeroKey);
+                int saveRemoved = RemovePrototypeHeroSaveData(save);
                 int formationRemoved = RemoveHeroFromFormation(save, PrototypeHeroKey);
                 int catalogRemoved = RemovePrototypeHeroCatalog();
-                string status = $"Prototype hero eliminado de runtime: cache {runtimeRemoved}, formacion {formationRemoved}, catalogo {catalogRemoved}. No guarda y no toca items/stash. {DescribeHeroCatalog()}";
+                int runtimeRemoved = RemoveRuntimeHeroCache(PrototypeHeroKey);
+                runtimeRemoved += TryRuntimeCall("uz.tx.isj prototype remove", () => global::uz.tx.isj());
+                int uiRefresh = TriggerPrototypeHeroUiRefresh(null);
+                string status = $"Prototype hero eliminado: save-mem {saveRemoved}, cache {runtimeRemoved}, formacion {formationRemoved}, catalogo {catalogRemoved}, ui {uiRefresh}. No guarda y no toca items/stash. {DescribeHeroCatalog()}";
                 Plugin.FileLog(status);
                 return status;
             }
@@ -3135,31 +3146,45 @@ internal sealed class ModActions
             throw new InvalidOperationException("SaveData no cargado para escritura directa.");
         }
 
-        bool timestampDirty = true;
+        var prototypeSnapshot = SuspendPrototypeHeroForSave(save);
+        if (prototypeSnapshot != null)
+        {
+            prototypeSnapshot.Restore();
+            throw new InvalidOperationException("Guardado bloqueado: prototipo temporal activo. Quita el prototipo o reinicia el juego antes de guardar cambios persistentes.");
+        }
+
         try
         {
-            timestampDirty = manager.mgf();
-            manager.mfu(global::UnityEngine.Application.version, global::UnityEngine.Time.timeSinceLevelLoad);
+            bool timestampDirty = true;
+            try
+            {
+                timestampDirty = manager.mgf();
+                manager.mfu(global::UnityEngine.Application.version, global::UnityEngine.Time.timeSinceLevelLoad);
+            }
+            catch (Exception ex)
+            {
+                Plugin.FileLog("Save metadata update failed: " + ex.Message);
+            }
+
+            string accountJson = global::Newtonsoft.Json.JsonConvert.SerializeObject(account);
+            string playerJson = global::Newtonsoft.Json.JsonConvert.SerializeObject(save);
+            string signature = manager.mfv(accountJson, playerJson, account.ownerSteamId);
+            string accountKey = GetPrivateSaveKey("fhg");
+            string playerKey = GetPrivateSaveKey("fhi");
+            string signatureKey = GetPrivateSaveKey("fhk");
+            var settings = new global::ES3Settings(manager.bghg, (global::ES3Settings)null);
+            global::bfj.naz<string>(accountKey, accountJson, settings);
+            global::bfj.naz<string>(playerKey, playerJson, settings);
+            global::bfj.naz<string>(signatureKey, signature, settings);
+
+            string status = "Guardado directo ES3 escrito.";
+            Plugin.FileLog(status);
+            return status;
         }
-        catch (Exception ex)
+        finally
         {
-            Plugin.FileLog("Save metadata update failed: " + ex.Message);
+            prototypeSnapshot?.Restore();
         }
-
-        string accountJson = global::Newtonsoft.Json.JsonConvert.SerializeObject(account);
-        string playerJson = global::Newtonsoft.Json.JsonConvert.SerializeObject(save);
-        string signature = manager.mfv(accountJson, playerJson, account.ownerSteamId);
-        string accountKey = GetPrivateSaveKey("fhg");
-        string playerKey = GetPrivateSaveKey("fhi");
-        string signatureKey = GetPrivateSaveKey("fhk");
-        var settings = new global::ES3Settings(manager.bghg, (global::ES3Settings)null);
-        global::bfj.naz<string>(accountKey, accountJson, settings);
-        global::bfj.naz<string>(playerKey, playerJson, settings);
-        global::bfj.naz<string>(signatureKey, signature, settings);
-
-        string status = "Guardado directo ES3 escrito.";
-        Plugin.FileLog(status);
-        return status;
     }
 
     private static string GetPrivateSaveKey(string methodName)
@@ -4194,6 +4219,254 @@ internal sealed class ModActions
         return hero;
     }
 
+    private static global::TaskbarHero.EasySaveData.HeroSaveData EnsureTransientPrototypeHeroSaveData(global::TaskbarHero.PlayerSaveData save)
+    {
+        var heroes = save?.heroSaveDatas;
+        if (heroes == null)
+        {
+            return CreateTransientPrototypeHeroSaveData();
+        }
+
+        var existing = FindHeroSaveData(save, PrototypeHeroKey);
+        if (existing != null)
+        {
+            existing.HeroLevel = GetTargetHeroLevel();
+            existing.IsUnLock = true;
+            existing.AbilityPoint = 0;
+            existing.AllocatedHeroAbilityPoint = 0;
+            return existing;
+        }
+
+        var hero = CreateTransientPrototypeHeroSaveData();
+        heroes.Add(hero);
+        return hero;
+    }
+
+    private static int RemovePrototypeHeroSaveData(global::TaskbarHero.PlayerSaveData save)
+    {
+        int removed = 0;
+        var heroes = save?.heroSaveDatas;
+        if (heroes == null)
+        {
+            return removed;
+        }
+
+        for (int i = heroes.Count - 1; i >= 0; i--)
+        {
+            var hero = heroes[i];
+            if (hero != null && hero.heroKey == PrototypeHeroKey)
+            {
+                heroes.RemoveAt(i);
+                removed++;
+            }
+        }
+
+        return removed;
+    }
+
+    private static int TriggerPrototypeHeroUiRefresh(global::vb heroRuntime)
+    {
+        int changed = 0;
+        changed += TryRuntimeCall("uz.tx.beqy prototype", () => global::uz.tx.beqy?.Invoke());
+        changed += TryRuntimeCall("uz.tx.beqz prototype", () => global::uz.tx.beqz?.Invoke());
+        changed += TryRuntimeCall("uz.tx.bera prototype", () => global::uz.tx.bera?.Invoke());
+        if (IsValid(heroRuntime))
+        {
+            changed += TryRuntimeCall("uz.tx.isx prototype", () => global::uz.tx.isx(PrototypeHeroKey));
+            changed += TryRuntimeCall("uz.tx.berb prototype", () => global::uz.tx.berb?.Invoke(PrototypeHeroKey));
+            changed += TryRuntimeCall("uz.tx.beri prototype", () => global::uz.tx.beri?.Invoke(heroRuntime));
+            changed += TryRuntimeCall("uz.tx.berk prototype", () => global::uz.tx.berk?.Invoke(heroRuntime));
+            changed += TryRuntimeCall("vb.jpu prototype", () => heroRuntime.jpu());
+        }
+
+        changed += RefreshVisibleHeroArrangeViews();
+        return changed;
+    }
+
+    private static int RefreshVisibleHeroArrangeViews()
+    {
+        int changed = 0;
+        try
+        {
+            var arrangeViews = global::UnityEngine.Resources.FindObjectsOfTypeAll<global::TaskbarHero.UI.UI_Arrange>();
+            if (arrangeViews == null)
+            {
+                return changed;
+            }
+
+            for (int i = 0; i < arrangeViews.Length; i++)
+            {
+                var arrange = arrangeViews[i];
+                if (!IsValid(arrange))
+                {
+                    continue;
+                }
+
+                changed += TryRuntimeCall("UI_Arrange.lof prototype", () => arrange.lof());
+                changed += TryRuntimeCall("UI_Arrange.lpa prototype", () => arrange.lpa());
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.FileLog("Prototype hero arrange refresh failed: " + ex.Message);
+        }
+
+        return changed;
+    }
+
+    internal static PrototypeHeroSaveSnapshot SuspendPrototypeHeroForSave(global::TaskbarHero.PlayerSaveData save)
+    {
+        if (save == null)
+        {
+            return null;
+        }
+
+        var snapshot = new PrototypeHeroSaveSnapshot(save);
+        var heroes = save.heroSaveDatas;
+        if (heroes != null)
+        {
+            for (int i = heroes.Count - 1; i >= 0; i--)
+            {
+                var hero = heroes[i];
+                if (hero != null && hero.heroKey == PrototypeHeroKey)
+                {
+                    snapshot.AddHero(i, hero);
+                    heroes.RemoveAt(i);
+                }
+            }
+        }
+
+        var arranged = save.commonSaveData?.arrangedHeroKey;
+        if (arranged != null && arranged.Length > 0)
+        {
+            bool containsPrototype = false;
+            for (int i = 0; i < arranged.Length; i++)
+            {
+                if (arranged[i] == PrototypeHeroKey)
+                {
+                    containsPrototype = true;
+                    break;
+                }
+            }
+
+            if (containsPrototype)
+            {
+                var original = new int[arranged.Length];
+                var filtered = new System.Collections.Generic.List<int>(arranged.Length);
+                for (int i = 0; i < arranged.Length; i++)
+                {
+                    original[i] = arranged[i];
+                    if (arranged[i] != PrototypeHeroKey)
+                    {
+                        filtered.Add(arranged[i]);
+                    }
+                }
+
+                snapshot.CaptureFormation(original);
+                save.commonSaveData.arrangedHeroKey = BuildIntArray(filtered.ToArray());
+            }
+        }
+
+        return snapshot.HasChanges ? snapshot : null;
+    }
+
+    internal sealed class PrototypeHeroSaveSnapshot
+    {
+        private readonly global::TaskbarHero.PlayerSaveData _save;
+        private readonly System.Collections.Generic.List<PrototypeHeroSaveEntry> _heroes = new();
+        private int[] _originalFormation;
+        private bool _formationChanged;
+        private bool _restored;
+
+        internal PrototypeHeroSaveSnapshot(global::TaskbarHero.PlayerSaveData save)
+        {
+            _save = save;
+        }
+
+        internal bool HasChanges => _heroes.Count > 0 || _formationChanged;
+
+        internal void AddHero(int index, global::TaskbarHero.EasySaveData.HeroSaveData hero)
+        {
+            if (hero != null)
+            {
+                _heroes.Add(new PrototypeHeroSaveEntry(index, hero));
+            }
+        }
+
+        internal void CaptureFormation(int[] originalFormation)
+        {
+            _originalFormation = originalFormation ?? Array.Empty<int>();
+            _formationChanged = true;
+        }
+
+        internal void Restore()
+        {
+            if (_restored)
+            {
+                return;
+            }
+
+            _restored = true;
+            try
+            {
+                RestoreHeroes();
+                RestoreFormation();
+            }
+            catch (Exception ex)
+            {
+                Plugin.FileLog("Prototype hero save snapshot restore failed: " + ex);
+            }
+        }
+
+        private void RestoreHeroes()
+        {
+            var heroes = _save?.heroSaveDatas;
+            if (heroes == null || _heroes.Count == 0)
+            {
+                return;
+            }
+
+            for (int i = heroes.Count - 1; i >= 0; i--)
+            {
+                var hero = heroes[i];
+                if (hero != null && hero.heroKey == PrototypeHeroKey)
+                {
+                    heroes.RemoveAt(i);
+                }
+            }
+
+            _heroes.Sort((left, right) => left.Index.CompareTo(right.Index));
+            for (int i = 0; i < _heroes.Count; i++)
+            {
+                var entry = _heroes[i];
+                int index = Math.Max(0, Math.Min(entry.Index, heroes.Count));
+                heroes.Insert(index, entry.Hero);
+            }
+        }
+
+        private void RestoreFormation()
+        {
+            if (!_formationChanged || _save?.commonSaveData == null)
+            {
+                return;
+            }
+
+            _save.commonSaveData.arrangedHeroKey = BuildIntArray(_originalFormation);
+        }
+    }
+
+    private readonly struct PrototypeHeroSaveEntry
+    {
+        internal PrototypeHeroSaveEntry(int index, global::TaskbarHero.EasySaveData.HeroSaveData hero)
+        {
+            Index = index;
+            Hero = hero;
+        }
+
+        internal int Index { get; }
+        internal global::TaskbarHero.EasySaveData.HeroSaveData Hero { get; }
+    }
+
     private static int UpsertRuntimeHeroCache(int heroKey, global::vb heroRuntime)
     {
         if (!IsValid(heroRuntime))
@@ -4250,7 +4523,9 @@ internal sealed class ModActions
         target.HeroKey = targetHeroKey;
         target.HeroNameKey = source.HeroNameKey;
         target.DescriptionKey = source.DescriptionKey;
-        target.ClassType = source.ClassType;
+        target.ClassType = targetHeroKey == PrototypeHeroKey
+            ? global::TaskbarHero.Data.EEquipClassType.All
+            : source.ClassType;
         target.MainWeaponGearType = source.MainWeaponGearType;
         target.SubWeaponGearType = source.SubWeaponGearType;
         target.SkillKey = source.SkillKey;
@@ -7385,6 +7660,26 @@ internal static class TrainerPlayerSaveDataPreSavePatch
         ModActions.ReapplyHeroUnlocks(__instance);
         ModActions.ReapplyForcedHeroLevels(__instance);
         ModActions.NormalizeEquippedItemContainerDuplicates(__instance);
+    }
+}
+
+[HarmonyPatch(typeof(global::bao), "mfu")]
+internal static class PrototypeHeroSaveFilterPatch
+{
+    private static void Prefix(global::bao __instance, ref ModActions.PrototypeHeroSaveSnapshot __state)
+    {
+        __state = ModActions.SuspendPrototypeHeroForSave(__instance?.bggy);
+    }
+
+    private static void Postfix(ModActions.PrototypeHeroSaveSnapshot __state)
+    {
+        __state?.Restore();
+    }
+
+    private static Exception Finalizer(Exception __exception, ModActions.PrototypeHeroSaveSnapshot __state)
+    {
+        __state?.Restore();
+        return __exception;
     }
 }
 
