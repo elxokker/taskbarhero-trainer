@@ -90,13 +90,35 @@ public sealed class Plugin : BasePlugin
                 _safeLifecycleHarmony.Patch(preSave, postfix: new HarmonyMethod(typeof(TrainerPlayerSaveDataPreSavePatch), nameof(TrainerPlayerSaveDataPreSavePatch.Postfix)));
             }
 
-            FileLog($"Safe save lifecycle patches loaded: PostLoad={postLoad != null}, PreSave={preSave != null}.");
+            int stashUiPagePatches = 0;
+            stashUiPagePatches += TryPatchPostfix(_safeLifecycleHarmony, AccessTools.Method(typeof(global::TaskbarHero.UI.UI_RemakeStash), "hnd"), typeof(TrainerStashUiPageUnlockPatch), nameof(TrainerStashUiPageUnlockPatch.Postfix));
+            stashUiPagePatches += TryPatchPostfix(_safeLifecycleHarmony, AccessTools.Method(typeof(global::TaskbarHero.UI.UI_RemakeStash), "OnEnable"), typeof(TrainerStashUiPageUnlockPatch), nameof(TrainerStashUiPageUnlockPatch.Postfix));
+            FileLog($"Safe save lifecycle patches loaded: PostLoad={postLoad != null}, PreSave={preSave != null}, StashPageUI={stashUiPagePatches}.");
             LogSource.LogInfo("Safe save lifecycle patches loaded");
         }
         catch (Exception ex)
         {
             FileLog("Safe lifecycle patch load failed: " + ex);
             LogSource.LogError("Safe lifecycle patch load failed: " + ex);
+        }
+    }
+
+    private static int TryPatchPostfix(Harmony harmony, MethodInfo target, Type patchType, string patchMethod)
+    {
+        if (harmony == null || target == null)
+        {
+            return 0;
+        }
+
+        try
+        {
+            harmony.Patch(target, postfix: new HarmonyMethod(patchType, patchMethod));
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            FileLog($"Safe patch failed for {target.DeclaringType?.FullName}.{target.Name}: {ex.Message}");
+            return 0;
         }
     }
 
@@ -261,6 +283,8 @@ internal sealed class ModActions
     private const float MaxGameSpeed = 10f;
     private const float GameSpeedEpsilon = 0.001f;
     private const int GameSpeedStatusBoostSource = 941415;
+    private const int StashPageUnlockSource = 941416;
+    private const int TargetStashPageUnlockCount = 99;
     private const string PreferredHeroFormationFileName = "preferred_hero_formation.txt";
 
     private static readonly string[] SharedClassGearTypes =
@@ -285,6 +309,7 @@ internal sealed class ModActions
     private readonly object _sync = new();
     private static float _desiredGameSpeed = 1f;
     private static long _lastGameSpeedReapplyLogTick;
+    private static long _lastStashPageUiLogTick;
 
     [ThreadStatic]
     private static bool _il2cppAttached;
@@ -295,6 +320,9 @@ internal sealed class ModActions
         public int StashChanged;
         public int RuntimeInventory;
         public int RuntimeStash;
+        public int RuntimeStashPages;
+        public int RuntimeStashTabs;
+        public string RuntimeStashPageDetail;
     }
 
     public void StopBackgroundActions()
@@ -1099,7 +1127,8 @@ internal sealed class ModActions
                 var save = GetSaveData();
                 SlotUnlockResult slots = UnlockInventoryAndStashInMemory(save);
                 string saveStatus = RequestSave();
-                string status = $"Slots desbloqueados: inv {slots.InventoryChanged}, alijo {slots.StashChanged}; runtime inv {slots.RuntimeInventory}, alijo {slots.RuntimeStash}. {saveStatus}";
+                string pageDetail = string.IsNullOrWhiteSpace(slots.RuntimeStashPageDetail) ? string.Empty : $" ({slots.RuntimeStashPageDetail})";
+                string status = $"Slots desbloqueados: inv {slots.InventoryChanged}, alijo {slots.StashChanged}; runtime inv {slots.RuntimeInventory}, alijo {slots.RuntimeStash}; paginas stash {slots.RuntimeStashPages}, tabs UI {slots.RuntimeStashTabs}{pageDetail}. {saveStatus}";
                 Plugin.FileLog(status);
                 return status;
             }
@@ -1116,6 +1145,8 @@ internal sealed class ModActions
 
         result.RuntimeInventory = RefreshRuntimeInventorySlots();
         result.RuntimeStash = RefreshRuntimeStashSlots();
+        result.RuntimeStashPages = ApplyStashPageRuntimeUnlock(out result.RuntimeStashPageDetail);
+        result.RuntimeStashTabs = RefreshRuntimeStashTabButtons();
         return result;
     }
 
@@ -2547,6 +2578,161 @@ internal sealed class ModActions
         }
 
         return changed;
+    }
+
+    private static int ApplyStashPageRuntimeUnlock(out string detail)
+    {
+        detail = string.Empty;
+        try
+        {
+            AttachIl2CppThread();
+            var accountStatusManager = GetRuntimeAccountStatusManager(out string lookupDetail);
+            if (!IsValid(accountStatusManager))
+            {
+                detail = "AccountStatus no listo: " + lookupDetail;
+                return -1;
+            }
+
+            var status = global::TaskbarHero.StatusSystem.EAccountStatus.UnlockStashPageCount;
+            int before = ReadAccountStatus(accountStatusManager, status);
+            SetAccountStatusContribution(accountStatusManager, status, TargetStashPageUnlockCount, StashPageUnlockSource);
+            int after = ReadAccountStatus(accountStatusManager, status);
+            detail = $"UnlockStashPageCount {before}->{after}";
+            return after;
+        }
+        catch (Exception ex)
+        {
+            detail = "UnlockStashPageCount fallo: " + ex.Message;
+            Plugin.FileLog(detail);
+            return -1;
+        }
+    }
+
+    private static int RefreshRuntimeStashTabButtons()
+    {
+        int changed = 0;
+        AttachIl2CppThread();
+        try
+        {
+            var stashUis = global::UnityEngine.Resources.FindObjectsOfTypeAll<global::TaskbarHero.UI.UI_RemakeStash>();
+            int count = stashUis?.Length ?? 0;
+            for (int i = 0; i < count; i++)
+            {
+                changed += RefreshRuntimeStashTabButtons(stashUis[i]);
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.FileLog("RefreshRuntimeStashTabButtons failed: " + ex.Message);
+        }
+
+        return changed;
+    }
+
+    private static int RefreshRuntimeStashTabButtons(global::TaskbarHero.UI.UI_RemakeStash ui)
+    {
+        if (!IsValid(ui))
+        {
+            return 0;
+        }
+
+        int changed = 0;
+        try
+        {
+            var tabs = ui.m_stashTabButtonList;
+            int count = tabs?.Count ?? 0;
+            for (int i = 0; i < count; i++)
+            {
+                changed += UnlockRuntimeStashTabButton(tabs[i]);
+            }
+
+            changed += UnlockRuntimeStashTabButton(ui.m_dlcTabButton);
+        }
+        catch (Exception ex)
+        {
+            Plugin.FileLog("RefreshRuntimeStashTabButtons(ui) failed: " + ex.Message);
+        }
+
+        return changed;
+    }
+
+    private static int UnlockRuntimeStashTabButton(global::TaskbarHero.UI.StashTabButton tab)
+    {
+        if (!IsValid(tab))
+        {
+            return 0;
+        }
+
+        int changed = 0;
+        try
+        {
+            if (tab.m_isLockedDlcTab)
+            {
+                tab.m_isLockedDlcTab = false;
+                changed++;
+            }
+
+            var button = tab.m_button;
+            if (IsValid(button))
+            {
+                if (!button.interactable)
+                {
+                    button.interactable = true;
+                    changed++;
+                }
+
+                if (!button.enabled)
+                {
+                    button.enabled = true;
+                    changed++;
+                }
+            }
+
+            var gameObject = tab.gameObject;
+            if (IsValid(gameObject) && !gameObject.activeSelf)
+            {
+                gameObject.SetActive(true);
+                changed++;
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.FileLog("UnlockRuntimeStashTabButton failed: " + ex.Message);
+        }
+
+        return changed;
+    }
+
+    internal static void ApplyStashPageUnlockForUi(global::TaskbarHero.UI.UI_RemakeStash ui, string source)
+    {
+        if (Plugin.IsShuttingDown || IsGameQuitting || !IsValid(ui))
+        {
+            return;
+        }
+
+        try
+        {
+            int pages = ApplyStashPageRuntimeUnlock(out string detail);
+            int tabs = RefreshRuntimeStashTabButtons(ui);
+            LogStashPageUiRefresh(source, pages, tabs, detail);
+        }
+        catch (Exception ex)
+        {
+            Plugin.FileLog($"Stash page UI unlock failed ({source}): {ex.Message}");
+        }
+    }
+
+    private static void LogStashPageUiRefresh(string source, int pages, int tabs, string detail)
+    {
+        long now = Environment.TickCount64;
+        long previous = Interlocked.Read(ref _lastStashPageUiLogTick);
+        if (now - previous < 3000)
+        {
+            return;
+        }
+
+        Interlocked.Exchange(ref _lastStashPageUiLogTick, now);
+        Plugin.FileLog($"Stash page unlock UI ({source}): pages {pages}, tabs {tabs}. {detail}");
     }
 
     private static int RefreshRuntimeTradingStashSlots()
@@ -7569,6 +7755,14 @@ internal static class TrainerPlayerSaveDataPostLoadPatch
     internal static void Postfix(global::TaskbarHero.PlayerSaveData __instance)
     {
         ModActions.ApplySaveLifecycleUnlocks(__instance, "PostLoad");
+    }
+}
+
+internal static class TrainerStashUiPageUnlockPatch
+{
+    internal static void Postfix(global::TaskbarHero.UI.UI_RemakeStash __instance)
+    {
+        ModActions.ApplyStashPageUnlockForUi(__instance, "UI_RemakeStash");
     }
 }
 
