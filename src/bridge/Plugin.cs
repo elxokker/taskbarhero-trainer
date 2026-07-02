@@ -26,10 +26,12 @@ public sealed class Plugin : BasePlugin
     public const string PluginVersion = "1.6";
     public const string PipeName = "TaskbarHeroTrainerPipe";
     private static readonly bool EnableRuntimeHarmonyPatches = false;
+    internal static readonly bool EnableForcedSaveRequests = false;
 
     internal static ManualLogSource LogSource;
     private static ModActions _actions;
     private static TrainerPipeServer _pipeServer;
+    private static Harmony _safeLifecycleHarmony;
     private static int _shutdownStarted;
 
     internal static bool IsShuttingDown => _shutdownStarted != 0;
@@ -63,6 +65,7 @@ public sealed class Plugin : BasePlugin
         {
             FileLog("Harmony runtime patches disabled for updated TaskbarHero build stability.");
             LogSource.LogInfo("Harmony runtime patches disabled for updated TaskbarHero build stability.");
+            InstallSafeLifecyclePatches();
         }
 
         LogSource.LogInfo("Starting trainer pipe server");
@@ -70,9 +73,44 @@ public sealed class Plugin : BasePlugin
         LogSource.LogInfo("Trainer pipe server start requested");
     }
 
+    private static void InstallSafeLifecyclePatches()
+    {
+        try
+        {
+            _safeLifecycleHarmony = new Harmony(PluginGuid + ".safe_lifecycle");
+            var postLoad = AccessTools.Method(typeof(global::TaskbarHero.PlayerSaveData), nameof(global::TaskbarHero.PlayerSaveData.PostLoad));
+            var preSave = AccessTools.Method(typeof(global::TaskbarHero.PlayerSaveData), nameof(global::TaskbarHero.PlayerSaveData.PreSave));
+            if (postLoad != null)
+            {
+                _safeLifecycleHarmony.Patch(postLoad, postfix: new HarmonyMethod(typeof(TrainerPlayerSaveDataPostLoadPatch), nameof(TrainerPlayerSaveDataPostLoadPatch.Postfix)));
+            }
+
+            if (preSave != null)
+            {
+                _safeLifecycleHarmony.Patch(preSave, postfix: new HarmonyMethod(typeof(TrainerPlayerSaveDataPreSavePatch), nameof(TrainerPlayerSaveDataPreSavePatch.Postfix)));
+            }
+
+            FileLog($"Safe save lifecycle patches loaded: PostLoad={postLoad != null}, PreSave={preSave != null}.");
+            LogSource.LogInfo("Safe save lifecycle patches loaded");
+        }
+        catch (Exception ex)
+        {
+            FileLog("Safe lifecycle patch load failed: " + ex);
+            LogSource.LogError("Safe lifecycle patch load failed: " + ex);
+        }
+    }
+
     public override bool Unload()
     {
         BeginShutdown("BepInEx unload");
+        try
+        {
+            _safeLifecycleHarmony?.UnpatchSelf();
+        }
+        catch
+        {
+        }
+
         FileLog($"{PluginName} {PluginVersion} Unload()");
         return true;
     }
@@ -251,11 +289,18 @@ internal sealed class ModActions
     [ThreadStatic]
     private static bool _il2cppAttached;
 
+    private struct SlotUnlockResult
+    {
+        public int InventoryChanged;
+        public int StashChanged;
+        public int TradingChanged;
+        public int RuntimeInventory;
+        public int RuntimeStash;
+        public int RuntimeTrading;
+    }
+
     public void StopBackgroundActions()
     {
-        lock (_sync)
-        {
-        }
     }
 
     internal static void BeginShutdown()
@@ -416,7 +461,7 @@ internal sealed class ModActions
                 string heroLevels = BuildHeroLevelSummary(save);
                 string status = manager == null
                     ? "Save manager no listo. Entra en partida y pulsa Refresh."
-                    : $"Runtime listo. Monedas {currencyCount}, heroes save {heroCount}/catalogo {heroCatalogCount} [{heroLevels}], inv {inventoryUnlocked}/{inventoryCount} ({inventoryEmpty} libres), alijo {stashUnlocked}/{stashCount}, items {itemCount}, mascotas {petUnlocked}/{petCount}, runtime patches {(Plugin.RuntimeHarmonyPatchesEnabled ? "ON" : "OFF")}, hero bypass {(Plugin.RuntimeHarmonyPatchesEnabled && ForceHeroUnlockChecks ? "ON" : "OFF")}.";
+                    : $"Runtime listo. Monedas {currencyCount}, heroes save {heroCount}/catalogo {heroCatalogCount} [{heroLevels}], inv {inventoryUnlocked}/{inventoryCount} ({inventoryEmpty} libres), alijo {stashUnlocked}/{stashCount}, items {itemCount}, mascotas {petUnlocked}/{petCount}, runtime patches {(Plugin.RuntimeHarmonyPatchesEnabled ? "ON" : "OFF")}, save forzado {(Plugin.EnableForcedSaveRequests ? "ON" : "OFF")}, hero bypass {((Plugin.RuntimeHarmonyPatchesEnabled || !Plugin.EnableForcedSaveRequests) && ForceHeroUnlockChecks ? "ON" : "OFF")}.";
                 Plugin.FileLog(status);
                 return status;
             }
@@ -549,6 +594,34 @@ internal sealed class ModActions
             {
                 return Fail("Restore heroes fallo", ex);
             }
+        }
+    }
+
+    internal static void ApplySaveLifecycleUnlocks(global::TaskbarHero.PlayerSaveData save, string source)
+    {
+        if (Plugin.IsShuttingDown || IsGameQuitting || save == null || save.Pointer == IntPtr.Zero)
+        {
+            return;
+        }
+
+        if (IsSuspiciousFreshSave(save))
+        {
+            Plugin.FileLog($"Save lifecycle unlock blocked ({source}): suspicious save {DescribeSafetyShape(save)}.");
+            return;
+        }
+
+        ForceHeroUnlockChecks = true;
+        ForceDlcOwnershipChecks = true;
+
+        int normalized = NormalizeHeroCatalogAvailability();
+        int added = EnsureMissingHeroSaveDataUnlockedOnly(save);
+        int unlocked = UnlockExistingHeroSaves(save);
+        int formationChanged = RestorePreferredHeroFormation(save, out string formationSummary);
+        SlotUnlockResult slots = UnlockInventoryAndStashSaveData(save);
+
+        if (normalized > 0 || added > 0 || unlocked > 0 || formationChanged > 0 || slots.InventoryChanged > 0 || slots.StashChanged > 0 || slots.TradingChanged > 0)
+        {
+            Plugin.FileLog($"Save lifecycle unlock ({source}): heroes nuevos {added}, desbloqueados {unlocked}, catalogo {normalized}, formacion {formationSummary}, inv {slots.InventoryChanged}, alijo {slots.StashChanged}, trade {slots.TradingChanged}, niveles {BuildHeroLevelSummary(save)}. No forced save.");
         }
     }
 
@@ -1026,63 +1099,9 @@ internal sealed class ModActions
             try
             {
                 var save = GetSaveData();
-                int inventoryChanged = 0;
-                int stashChanged = 0;
-                int tradingStashChanged = 0;
-
-                var inventory = save.inventorySaveDatas;
-                if (inventory != null)
-                {
-                    for (int i = 0; i < inventory.Count; i++)
-                    {
-                        var slot = inventory[i];
-                        if (slot == null || slot.IsUnlock)
-                        {
-                            continue;
-                        }
-
-                        slot.IsUnlock = true;
-                        inventoryChanged++;
-                    }
-                }
-
-                var stash = save.stashSaveDatas;
-                if (stash != null)
-                {
-                    for (int i = 0; i < stash.Count; i++)
-                    {
-                        var slot = stash[i];
-                        if (slot == null || slot.IsUnLock)
-                        {
-                            continue;
-                        }
-
-                        slot.IsUnLock = true;
-                        stashChanged++;
-                    }
-                }
-
-                var tradingStash = save.remakeTradingStashSaveDatas;
-                if (tradingStash != null)
-                {
-                    for (int i = 0; i < tradingStash.Count; i++)
-                    {
-                        var slot = tradingStash[i];
-                        if (slot == null || slot.IsUnLock)
-                        {
-                            continue;
-                        }
-
-                        slot.IsUnLock = true;
-                        tradingStashChanged++;
-                    }
-                }
-
-                int runtimeInventory = RefreshRuntimeInventorySlots();
-                int runtimeStash = RefreshRuntimeStashSlots();
-                int runtimeTradingStash = RefreshRuntimeTradingStashSlots();
+                SlotUnlockResult slots = UnlockInventoryAndStashInMemory(save);
                 string saveStatus = RequestSave();
-                string status = $"Slots desbloqueados: inv {inventoryChanged}, alijo {stashChanged}, trade {tradingStashChanged}; runtime inv {runtimeInventory}, alijo {runtimeStash}, trade {runtimeTradingStash}. {saveStatus}";
+                string status = $"Slots desbloqueados: inv {slots.InventoryChanged}, alijo {slots.StashChanged}, trade {slots.TradingChanged}; runtime inv {slots.RuntimeInventory}, alijo {slots.RuntimeStash}, trade {slots.RuntimeTrading}. {saveStatus}";
                 Plugin.FileLog(status);
                 return status;
             }
@@ -1091,6 +1110,71 @@ internal sealed class ModActions
                 return Fail("Unlock inventory fallo", ex);
             }
         }
+    }
+
+    private static SlotUnlockResult UnlockInventoryAndStashInMemory(global::TaskbarHero.PlayerSaveData save)
+    {
+        SlotUnlockResult result = UnlockInventoryAndStashSaveData(save);
+
+        result.RuntimeInventory = RefreshRuntimeInventorySlots();
+        result.RuntimeStash = RefreshRuntimeStashSlots();
+        result.RuntimeTrading = RefreshRuntimeTradingStashSlots();
+        return result;
+    }
+
+    private static SlotUnlockResult UnlockInventoryAndStashSaveData(global::TaskbarHero.PlayerSaveData save)
+    {
+        SlotUnlockResult result = default;
+
+        var inventory = save?.inventorySaveDatas;
+        if (inventory != null)
+        {
+            for (int i = 0; i < inventory.Count; i++)
+            {
+                var slot = inventory[i];
+                if (slot == null || slot.IsUnlock)
+                {
+                    continue;
+                }
+
+                slot.IsUnlock = true;
+                result.InventoryChanged++;
+            }
+        }
+
+        var stash = save?.stashSaveDatas;
+        if (stash != null)
+        {
+            for (int i = 0; i < stash.Count; i++)
+            {
+                var slot = stash[i];
+                if (slot == null || slot.IsUnLock)
+                {
+                    continue;
+                }
+
+                slot.IsUnLock = true;
+                result.StashChanged++;
+            }
+        }
+
+        var tradingStash = save?.remakeTradingStashSaveDatas;
+        if (tradingStash != null)
+        {
+            for (int i = 0; i < tradingStash.Count; i++)
+            {
+                var slot = tradingStash[i];
+                if (slot == null || slot.IsUnLock)
+                {
+                    continue;
+                }
+
+                slot.IsUnLock = true;
+                result.TradingChanged++;
+            }
+        }
+
+        return result;
     }
 
     public string CloneExistingItemsToEmptyInventorySlots()
@@ -3363,6 +3447,13 @@ internal sealed class ModActions
     {
         try
         {
+            if (!Plugin.EnableForcedSaveRequests)
+            {
+                string blocked = "Guardado forzado no solicitado: desactivado tras la update para proteger el save.";
+                Plugin.FileLog(blocked);
+                return blocked;
+            }
+
             var manager = GetSaveManager();
             if (manager == null)
             {
@@ -7507,11 +7598,21 @@ internal sealed class ModActions
 [HarmonyPatch(typeof(global::TaskbarHero.PlayerSaveData), nameof(global::TaskbarHero.PlayerSaveData.PreSave))]
 internal static class TrainerPlayerSaveDataPreSavePatch
 {
-    private static void Postfix(global::TaskbarHero.PlayerSaveData __instance)
+    internal static void Postfix(global::TaskbarHero.PlayerSaveData __instance)
     {
+        ModActions.ApplySaveLifecycleUnlocks(__instance, "PreSave");
         ModActions.ReapplyHeroUnlocks(__instance);
         ModActions.ReapplyForcedHeroLevels(__instance);
         ModActions.NormalizeEquippedItemContainerDuplicates(__instance);
+    }
+}
+
+[HarmonyPatch(typeof(global::TaskbarHero.PlayerSaveData), nameof(global::TaskbarHero.PlayerSaveData.PostLoad))]
+internal static class TrainerPlayerSaveDataPostLoadPatch
+{
+    internal static void Postfix(global::TaskbarHero.PlayerSaveData __instance)
+    {
+        ModActions.ApplySaveLifecycleUnlocks(__instance, "PostLoad");
     }
 }
 
