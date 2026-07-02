@@ -90,44 +90,13 @@ public sealed class Plugin : BasePlugin
                 _safeLifecycleHarmony.Patch(preSave, postfix: new HarmonyMethod(typeof(TrainerPlayerSaveDataPreSavePatch), nameof(TrainerPlayerSaveDataPreSavePatch.Postfix)));
             }
 
-            int lateRuntimePatches = InstallSafeLateRuntimePatches(_safeLifecycleHarmony);
-            int stashUiPatches = TryPatchPostfix(_safeLifecycleHarmony, AccessTools.Method(typeof(global::TaskbarHero.UI.UI_RemakeStash), "hnd"), typeof(TrainerStashOpenRuntimeRefreshPatch), nameof(TrainerStashOpenRuntimeRefreshPatch.Postfix));
-            FileLog($"Safe save lifecycle patches loaded: PostLoad={postLoad != null}, PreSave={preSave != null}, LateRuntime={lateRuntimePatches}, StashUI={stashUiPatches}.");
+            FileLog($"Safe save lifecycle patches loaded: PostLoad={postLoad != null}, PreSave={preSave != null}.");
             LogSource.LogInfo("Safe save lifecycle patches loaded");
         }
         catch (Exception ex)
         {
             FileLog("Safe lifecycle patch load failed: " + ex);
             LogSource.LogError("Safe lifecycle patch load failed: " + ex);
-        }
-    }
-
-    private static int InstallSafeLateRuntimePatches(Harmony harmony)
-    {
-        int patched = 0;
-        patched += TryPatchPostfix(harmony, AccessTools.Method(typeof(global::TaskbarHero.StageManager), "ifx"), typeof(TrainerLateStashRuntimeRefreshPatch), nameof(TrainerLateStashRuntimeRefreshPatch.Postfix));
-        patched += TryPatchPostfix(harmony, AccessTools.Method(typeof(global::TaskbarHero.StageManager), "ihc"), typeof(TrainerLateStashRuntimeRefreshPatch), nameof(TrainerLateStashRuntimeRefreshPatch.Postfix));
-        patched += TryPatchPostfix(harmony, AccessTools.Method(typeof(global::TaskbarHero.StageManager), "ige"), typeof(TrainerLateStashRuntimeRefreshPatch), nameof(TrainerLateStashRuntimeRefreshPatch.Postfix));
-        patched += TryPatchPostfix(harmony, AccessTools.Method(typeof(global::TaskbarHero.StageManager), "iic"), typeof(TrainerLateStashRuntimeRefreshPatch), nameof(TrainerLateStashRuntimeRefreshPatch.Postfix));
-        return patched;
-    }
-
-    private static int TryPatchPostfix(Harmony harmony, MethodInfo target, Type patchType, string patchMethod)
-    {
-        if (harmony == null || target == null)
-        {
-            return 0;
-        }
-
-        try
-        {
-            harmony.Patch(target, postfix: new HarmonyMethod(patchType, patchMethod));
-            return 1;
-        }
-        catch (Exception ex)
-        {
-            FileLog($"Safe patch failed for {target.DeclaringType?.FullName}.{target.Name}: {ex.Message}");
-            return 0;
         }
     }
 
@@ -316,8 +285,6 @@ internal sealed class ModActions
     private readonly object _sync = new();
     private static float _desiredGameSpeed = 1f;
     private static long _lastGameSpeedReapplyLogTick;
-    private static int _lateStashRuntimeRefreshAttempts;
-    private static int _lateStashRuntimeReady;
 
     [ThreadStatic]
     private static bool _il2cppAttached;
@@ -326,10 +293,8 @@ internal sealed class ModActions
     {
         public int InventoryChanged;
         public int StashChanged;
-        public int TradingChanged;
         public int RuntimeInventory;
         public int RuntimeStash;
-        public int RuntimeTrading;
     }
 
     public void StopBackgroundActions()
@@ -651,52 +616,10 @@ internal sealed class ModActions
         int unlocked = UnlockExistingHeroSaves(save);
         int formationChanged = RestorePreferredHeroFormation(save, out string formationSummary);
         SlotUnlockResult slots = UnlockInventoryAndStashSaveData(save);
-        if (string.Equals(source, "PostLoad", StringComparison.Ordinal))
-        {
-            slots.RuntimeStash = RefreshRuntimeStashSlots();
-            slots.RuntimeTrading = RefreshRuntimeTradingStashSlots();
-        }
 
-        if (normalized > 0 || added > 0 || unlocked > 0 || formationChanged > 0 || slots.InventoryChanged > 0 || slots.StashChanged > 0 || slots.TradingChanged > 0)
+        if (normalized > 0 || added > 0 || unlocked > 0 || formationChanged > 0 || slots.InventoryChanged > 0 || slots.StashChanged > 0)
         {
-            Plugin.FileLog($"Save lifecycle unlock ({source}): heroes nuevos {added}, desbloqueados {unlocked}, catalogo {normalized}, formacion {formationSummary}, inv {slots.InventoryChanged}, alijo {slots.StashChanged}, trade {slots.TradingChanged}, runtime alijo {slots.RuntimeStash}, runtime trade {slots.RuntimeTrading}, niveles {BuildHeroLevelSummary(save)}. No forced save.");
-        }
-    }
-
-    internal static void TryLateStashRuntimeRefresh(string source)
-    {
-        if (Plugin.IsShuttingDown || IsGameQuitting || Interlocked.CompareExchange(ref _lateStashRuntimeReady, 0, 0) != 0)
-        {
-            return;
-        }
-
-        int attempt = Interlocked.Increment(ref _lateStashRuntimeRefreshAttempts);
-        if (attempt > 20)
-        {
-            return;
-        }
-
-        try
-        {
-            var save = GetSaveDataOrNull();
-            if (save == null || save.Pointer == IntPtr.Zero || IsSuspiciousFreshSave(save))
-            {
-                return;
-            }
-
-            SlotUnlockResult slots = UnlockInventoryAndStashSaveData(save);
-            int runtimeStash = RefreshRuntimeStashSlots();
-            int runtimeTrading = RefreshRuntimeTradingStashSlots();
-            if (runtimeStash > 100)
-            {
-                Interlocked.Exchange(ref _lateStashRuntimeReady, 1);
-            }
-
-            Plugin.FileLog($"Late stash runtime refresh ({source}) attempt {attempt}: save alijo {slots.StashChanged}, trade {slots.TradingChanged}; runtime alijo {runtimeStash}, trade {runtimeTrading}; ready={_lateStashRuntimeReady}.");
-        }
-        catch (Exception ex)
-        {
-            Plugin.FileLog($"Late stash runtime refresh failed ({source}) attempt {attempt}: {ex.Message}");
+            Plugin.FileLog($"Save lifecycle unlock ({source}): heroes nuevos {added}, desbloqueados {unlocked}, catalogo {normalized}, formacion {formationSummary}, inv {slots.InventoryChanged}, alijo {slots.StashChanged}, niveles {BuildHeroLevelSummary(save)}. No forced save.");
         }
     }
 
@@ -1176,7 +1099,7 @@ internal sealed class ModActions
                 var save = GetSaveData();
                 SlotUnlockResult slots = UnlockInventoryAndStashInMemory(save);
                 string saveStatus = RequestSave();
-                string status = $"Slots desbloqueados: inv {slots.InventoryChanged}, alijo {slots.StashChanged}, trade {slots.TradingChanged}; runtime inv {slots.RuntimeInventory}, alijo {slots.RuntimeStash}, trade {slots.RuntimeTrading}. {saveStatus}";
+                string status = $"Slots desbloqueados: inv {slots.InventoryChanged}, alijo {slots.StashChanged}; runtime inv {slots.RuntimeInventory}, alijo {slots.RuntimeStash}. {saveStatus}";
                 Plugin.FileLog(status);
                 return status;
             }
@@ -1193,7 +1116,6 @@ internal sealed class ModActions
 
         result.RuntimeInventory = RefreshRuntimeInventorySlots();
         result.RuntimeStash = RefreshRuntimeStashSlots();
-        result.RuntimeTrading = RefreshRuntimeTradingStashSlots();
         return result;
     }
 
@@ -1230,22 +1152,6 @@ internal sealed class ModActions
 
                 slot.IsUnLock = true;
                 result.StashChanged++;
-            }
-        }
-
-        var tradingStash = save?.remakeTradingStashSaveDatas;
-        if (tradingStash != null)
-        {
-            for (int i = 0; i < tradingStash.Count; i++)
-            {
-                var slot = tradingStash[i];
-                if (slot == null || slot.IsUnLock)
-                {
-                    continue;
-                }
-
-                slot.IsUnLock = true;
-                result.TradingChanged++;
             }
         }
 
@@ -2645,33 +2551,8 @@ internal sealed class ModActions
 
     private static int RefreshRuntimeTradingStashSlots()
     {
-        int changed = 0;
-        AttachIl2CppThread();
-        try
-        {
-            for (int i = 0; i < 420; i++)
-            {
-                var slot = FindRuntimeTradingStashSlot(i);
-                if (!IsValid(slot))
-                {
-                    continue;
-                }
-
-                changed += TryRuntimeCall("TradingStashCache.jsw", () => slot.jsw(true));
-                changed += TryRuntimeCall("TradingStashCache.OnTradingStashSlotChanged", () => slot.OnTradingStashSlotChanged?.Invoke());
-            }
-
-            var tradingStashType = GameType("vb+va") ?? GameType("va");
-            changed += TryRuntimeCall("va.jll", () => TryInvokeStaticMethod(tradingStashType, "jll"));
-            changed += TryRuntimeCall("va.jli", () => TryInvokeStaticMethod(tradingStashType, "jli"));
-            changed += TryRuntimeCall("va.nzp", () => TryInvokeStaticMethod(tradingStashType, "nzp"));
-        }
-        catch (Exception ex)
-        {
-            Plugin.FileLog($"RefreshRuntimeTradingStashSlots failed: {ex.Message}");
-        }
-
-        return changed;
+        Plugin.FileLog("RefreshRuntimeTradingStashSlots desactivado: vb+va/remakeTradingStash provoca duplicados internos durante la carga en la version actual.");
+        return 0;
     }
 
     private static int RefreshRuntimeHero(global::TaskbarHero.EasySaveData.HeroSaveData hero)
@@ -7688,22 +7569,6 @@ internal static class TrainerPlayerSaveDataPostLoadPatch
     internal static void Postfix(global::TaskbarHero.PlayerSaveData __instance)
     {
         ModActions.ApplySaveLifecycleUnlocks(__instance, "PostLoad");
-    }
-}
-
-internal static class TrainerLateStashRuntimeRefreshPatch
-{
-    internal static void Postfix(MethodBase __originalMethod)
-    {
-        ModActions.TryLateStashRuntimeRefresh(__originalMethod?.Name ?? "stage");
-    }
-}
-
-internal static class TrainerStashOpenRuntimeRefreshPatch
-{
-    internal static void Postfix()
-    {
-        ModActions.TryLateStashRuntimeRefresh("UI_RemakeStash.hnd");
     }
 }
 
