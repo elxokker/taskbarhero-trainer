@@ -90,13 +90,44 @@ public sealed class Plugin : BasePlugin
                 _safeLifecycleHarmony.Patch(preSave, postfix: new HarmonyMethod(typeof(TrainerPlayerSaveDataPreSavePatch), nameof(TrainerPlayerSaveDataPreSavePatch.Postfix)));
             }
 
-            FileLog($"Safe save lifecycle patches loaded: PostLoad={postLoad != null}, PreSave={preSave != null}.");
+            int lateRuntimePatches = InstallSafeLateRuntimePatches(_safeLifecycleHarmony);
+            int stashUiPatches = TryPatchPostfix(_safeLifecycleHarmony, AccessTools.Method(typeof(global::TaskbarHero.UI.UI_RemakeStash), "hnd"), typeof(TrainerStashOpenRuntimeRefreshPatch), nameof(TrainerStashOpenRuntimeRefreshPatch.Postfix));
+            FileLog($"Safe save lifecycle patches loaded: PostLoad={postLoad != null}, PreSave={preSave != null}, LateRuntime={lateRuntimePatches}, StashUI={stashUiPatches}.");
             LogSource.LogInfo("Safe save lifecycle patches loaded");
         }
         catch (Exception ex)
         {
             FileLog("Safe lifecycle patch load failed: " + ex);
             LogSource.LogError("Safe lifecycle patch load failed: " + ex);
+        }
+    }
+
+    private static int InstallSafeLateRuntimePatches(Harmony harmony)
+    {
+        int patched = 0;
+        patched += TryPatchPostfix(harmony, AccessTools.Method(typeof(global::TaskbarHero.StageManager), "ifx"), typeof(TrainerLateStashRuntimeRefreshPatch), nameof(TrainerLateStashRuntimeRefreshPatch.Postfix));
+        patched += TryPatchPostfix(harmony, AccessTools.Method(typeof(global::TaskbarHero.StageManager), "ihc"), typeof(TrainerLateStashRuntimeRefreshPatch), nameof(TrainerLateStashRuntimeRefreshPatch.Postfix));
+        patched += TryPatchPostfix(harmony, AccessTools.Method(typeof(global::TaskbarHero.StageManager), "ige"), typeof(TrainerLateStashRuntimeRefreshPatch), nameof(TrainerLateStashRuntimeRefreshPatch.Postfix));
+        patched += TryPatchPostfix(harmony, AccessTools.Method(typeof(global::TaskbarHero.StageManager), "iic"), typeof(TrainerLateStashRuntimeRefreshPatch), nameof(TrainerLateStashRuntimeRefreshPatch.Postfix));
+        return patched;
+    }
+
+    private static int TryPatchPostfix(Harmony harmony, MethodInfo target, Type patchType, string patchMethod)
+    {
+        if (harmony == null || target == null)
+        {
+            return 0;
+        }
+
+        try
+        {
+            harmony.Patch(target, postfix: new HarmonyMethod(patchType, patchMethod));
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            FileLog($"Safe patch failed for {target.DeclaringType?.FullName}.{target.Name}: {ex.Message}");
+            return 0;
         }
     }
 
@@ -285,6 +316,8 @@ internal sealed class ModActions
     private readonly object _sync = new();
     private static float _desiredGameSpeed = 1f;
     private static long _lastGameSpeedReapplyLogTick;
+    private static int _lateStashRuntimeRefreshAttempts;
+    private static int _lateStashRuntimeReady;
 
     [ThreadStatic]
     private static bool _il2cppAttached;
@@ -618,10 +651,52 @@ internal sealed class ModActions
         int unlocked = UnlockExistingHeroSaves(save);
         int formationChanged = RestorePreferredHeroFormation(save, out string formationSummary);
         SlotUnlockResult slots = UnlockInventoryAndStashSaveData(save);
+        if (string.Equals(source, "PostLoad", StringComparison.Ordinal))
+        {
+            slots.RuntimeStash = RefreshRuntimeStashSlots();
+            slots.RuntimeTrading = RefreshRuntimeTradingStashSlots();
+        }
 
         if (normalized > 0 || added > 0 || unlocked > 0 || formationChanged > 0 || slots.InventoryChanged > 0 || slots.StashChanged > 0 || slots.TradingChanged > 0)
         {
-            Plugin.FileLog($"Save lifecycle unlock ({source}): heroes nuevos {added}, desbloqueados {unlocked}, catalogo {normalized}, formacion {formationSummary}, inv {slots.InventoryChanged}, alijo {slots.StashChanged}, trade {slots.TradingChanged}, niveles {BuildHeroLevelSummary(save)}. No forced save.");
+            Plugin.FileLog($"Save lifecycle unlock ({source}): heroes nuevos {added}, desbloqueados {unlocked}, catalogo {normalized}, formacion {formationSummary}, inv {slots.InventoryChanged}, alijo {slots.StashChanged}, trade {slots.TradingChanged}, runtime alijo {slots.RuntimeStash}, runtime trade {slots.RuntimeTrading}, niveles {BuildHeroLevelSummary(save)}. No forced save.");
+        }
+    }
+
+    internal static void TryLateStashRuntimeRefresh(string source)
+    {
+        if (Plugin.IsShuttingDown || IsGameQuitting || Interlocked.CompareExchange(ref _lateStashRuntimeReady, 0, 0) != 0)
+        {
+            return;
+        }
+
+        int attempt = Interlocked.Increment(ref _lateStashRuntimeRefreshAttempts);
+        if (attempt > 20)
+        {
+            return;
+        }
+
+        try
+        {
+            var save = GetSaveDataOrNull();
+            if (save == null || save.Pointer == IntPtr.Zero || IsSuspiciousFreshSave(save))
+            {
+                return;
+            }
+
+            SlotUnlockResult slots = UnlockInventoryAndStashSaveData(save);
+            int runtimeStash = RefreshRuntimeStashSlots();
+            int runtimeTrading = RefreshRuntimeTradingStashSlots();
+            if (runtimeStash > 100)
+            {
+                Interlocked.Exchange(ref _lateStashRuntimeReady, 1);
+            }
+
+            Plugin.FileLog($"Late stash runtime refresh ({source}) attempt {attempt}: save alijo {slots.StashChanged}, trade {slots.TradingChanged}; runtime alijo {runtimeStash}, trade {runtimeTrading}; ready={_lateStashRuntimeReady}.");
+        }
+        catch (Exception ex)
+        {
+            Plugin.FileLog($"Late stash runtime refresh failed ({source}) attempt {attempt}: {ex.Message}");
         }
     }
 
@@ -2470,7 +2545,7 @@ internal sealed class ModActions
     {
         try
         {
-            var slot = TryInvokeStaticMethod(GameType("Stash"), "jkc", index) as Il2CppObjectBase;
+            var slot = TryInvokeStaticMethod(GameType("vb+Stash") ?? GameType("Stash"), "jkc", index) as Il2CppObjectBase;
             return IsValid(slot) ? slot : null;
         }
         catch
@@ -2483,7 +2558,7 @@ internal sealed class ModActions
     {
         global::TaskbarHero.TradingStashCache slot = null;
 
-        var tradingStashType = GameType("va");
+        var tradingStashType = GameType("vb+va") ?? GameType("va");
         try { slot = TryInvokeStaticMethod(tradingStashType, "jlm", index) as global::TaskbarHero.TradingStashCache; } catch { }
         if (IsValid(slot)) { return slot; }
 
@@ -2558,7 +2633,7 @@ internal sealed class ModActions
                 changed += TryRuntimeCall("StashCache.jld", () => TryInvokeInstanceMethod(slot, "jld"));
             }
 
-            changed += TryRuntimeCall("Stash.jka", () => TryInvokeStaticMethod(GameType("Stash"), "jka"));
+            changed += TryRuntimeCall("Stash.jka", () => TryInvokeStaticMethod(GameType("vb+Stash") ?? GameType("Stash"), "jka"));
         }
         catch (Exception ex)
         {
@@ -2586,7 +2661,7 @@ internal sealed class ModActions
                 changed += TryRuntimeCall("TradingStashCache.OnTradingStashSlotChanged", () => slot.OnTradingStashSlotChanged?.Invoke());
             }
 
-            var tradingStashType = GameType("va");
+            var tradingStashType = GameType("vb+va") ?? GameType("va");
             changed += TryRuntimeCall("va.jll", () => TryInvokeStaticMethod(tradingStashType, "jll"));
             changed += TryRuntimeCall("va.jli", () => TryInvokeStaticMethod(tradingStashType, "jli"));
             changed += TryRuntimeCall("va.nzp", () => TryInvokeStaticMethod(tradingStashType, "nzp"));
@@ -7613,6 +7688,22 @@ internal static class TrainerPlayerSaveDataPostLoadPatch
     internal static void Postfix(global::TaskbarHero.PlayerSaveData __instance)
     {
         ModActions.ApplySaveLifecycleUnlocks(__instance, "PostLoad");
+    }
+}
+
+internal static class TrainerLateStashRuntimeRefreshPatch
+{
+    internal static void Postfix(MethodBase __originalMethod)
+    {
+        ModActions.TryLateStashRuntimeRefresh(__originalMethod?.Name ?? "stage");
+    }
+}
+
+internal static class TrainerStashOpenRuntimeRefreshPatch
+{
+    internal static void Postfix()
+    {
+        ModActions.TryLateStashRuntimeRefresh("UI_RemakeStash.hnd");
     }
 }
 
