@@ -25,6 +25,7 @@ public sealed class Plugin : BasePlugin
     public const string PluginName = "TaskbarHero Trainer Bridge";
     public const string PluginVersion = "1.6";
     public const string PipeName = "TaskbarHeroTrainerPipe";
+    private static readonly bool EnableRuntimeHarmonyPatches = false;
 
     internal static ManualLogSource LogSource;
     private static ModActions _actions;
@@ -32,6 +33,7 @@ public sealed class Plugin : BasePlugin
     private static int _shutdownStarted;
 
     internal static bool IsShuttingDown => _shutdownStarted != 0;
+    internal static bool RuntimeHarmonyPatchesEnabled => EnableRuntimeHarmonyPatches;
 
     public override void Load()
     {
@@ -43,16 +45,24 @@ public sealed class Plugin : BasePlugin
         FileLog($"{PluginName} {PluginVersion} Load()");
         LogSource.LogInfo("Bridge Load entered");
 
-        try
+        if (EnableRuntimeHarmonyPatches)
         {
-            new Harmony(PluginGuid).PatchAll(typeof(Plugin).Assembly);
-            FileLog("Harmony patches loaded");
-            LogSource.LogInfo("Harmony patches loaded");
+            try
+            {
+                new Harmony(PluginGuid).PatchAll(typeof(Plugin).Assembly);
+                FileLog("Harmony patches loaded");
+                LogSource.LogInfo("Harmony patches loaded");
+            }
+            catch (Exception ex)
+            {
+                FileLog("Harmony patch load failed: " + ex);
+                LogSource.LogError("Harmony patch load failed: " + ex);
+            }
         }
-        catch (Exception ex)
+        else
         {
-            FileLog("Harmony patch load failed: " + ex);
-            LogSource.LogError("Harmony patch load failed: " + ex);
+            FileLog("Harmony runtime patches disabled for updated TaskbarHero build stability.");
+            LogSource.LogInfo("Harmony runtime patches disabled for updated TaskbarHero build stability.");
         }
 
         LogSource.LogInfo("Starting trainer pipe server");
@@ -406,7 +416,7 @@ internal sealed class ModActions
                 string heroLevels = BuildHeroLevelSummary(save);
                 string status = manager == null
                     ? "Save manager no listo. Entra en partida y pulsa Refresh."
-                    : $"Runtime listo. Monedas {currencyCount}, heroes save {heroCount}/catalogo {heroCatalogCount} [{heroLevels}], inv {inventoryUnlocked}/{inventoryCount} ({inventoryEmpty} libres), alijo {stashUnlocked}/{stashCount}, items {itemCount}, mascotas {petUnlocked}/{petCount}, hero bypass {(ForceHeroUnlockChecks ? "ON" : "OFF")}.";
+                    : $"Runtime listo. Monedas {currencyCount}, heroes save {heroCount}/catalogo {heroCatalogCount} [{heroLevels}], inv {inventoryUnlocked}/{inventoryCount} ({inventoryEmpty} libres), alijo {stashUnlocked}/{stashCount}, items {itemCount}, mascotas {petUnlocked}/{petCount}, runtime patches {(Plugin.RuntimeHarmonyPatchesEnabled ? "ON" : "OFF")}, hero bypass {(Plugin.RuntimeHarmonyPatchesEnabled && ForceHeroUnlockChecks ? "ON" : "OFF")}.";
                 Plugin.FileLog(status);
                 return status;
             }
@@ -934,7 +944,9 @@ internal sealed class ModActions
     public string SetOneHitKill(bool enabled)
     {
         OneHitKillEnabled = enabled;
-        string status = enabled ? "One hit kill activado." : "One hit kill desactivado.";
+        string status = Plugin.RuntimeHarmonyPatchesEnabled
+            ? (enabled ? "One hit kill activado." : "One hit kill desactivado.")
+            : "One hit kill no aplicado: runtime patches OFF en esta build estable.";
         Plugin.FileLog(status);
         return status;
     }
@@ -942,7 +954,9 @@ internal sealed class ModActions
     public string SetGodMode(bool enabled)
     {
         GodModeEnabled = enabled;
-        string status = enabled ? "God mode activado." : "God mode desactivado.";
+        string status = Plugin.RuntimeHarmonyPatchesEnabled
+            ? (enabled ? "God mode activado." : "God mode desactivado.")
+            : "God mode no aplicado: runtime patches OFF en esta build estable.";
         Plugin.FileLog(status);
         return status;
     }
@@ -951,7 +965,9 @@ internal sealed class ModActions
     {
         ForceHeroUnlockChecks = enabled;
         ForceDlcOwnershipChecks = enabled;
-        string status = enabled ? "Bypass heroes/DLC activado." : "Bypass heroes/DLC desactivado.";
+        string status = Plugin.RuntimeHarmonyPatchesEnabled
+            ? (enabled ? "Bypass heroes/DLC activado." : "Bypass heroes/DLC desactivado.")
+            : "Bypass heroes/DLC runtime no aplicado: runtime patches OFF en esta build estable.";
         Plugin.FileLog(status);
         return status;
     }
@@ -7606,6 +7622,12 @@ internal static class TrainerDlcOwnedPatch
     private static readonly object LogSync = new();
     private static readonly System.Collections.Generic.HashSet<uint> LoggedAppIds = new();
 
+    private static bool Prepare()
+    {
+        Plugin.FileLog("DLC ownership runtime patch disabled for updated build; avoiding Steam/DLC stack overflow.");
+        return false;
+    }
+
     private static System.Collections.Generic.IEnumerable<MethodBase> TargetMethods()
     {
         foreach (var method in typeof(global::TaskbarHero.DLCManager).GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
@@ -7655,6 +7677,12 @@ internal static class TrainerHeroBoolBypassPatch
 {
     private static readonly object LogSync = new();
     private static readonly System.Collections.Generic.HashSet<string> LoggedMethods = new();
+
+    private static bool Prepare()
+    {
+        Plugin.FileLog("Hero runtime bool bypass disabled for updated build; using DLC/save persistence paths only.");
+        return false;
+    }
 
     private static System.Collections.Generic.IEnumerable<MethodBase> TargetMethods()
     {
@@ -7762,8 +7790,8 @@ internal static class TrainerBackendInventoryRemovePatch
 {
     private static bool Prepare()
     {
-        return AccessTools.Method(typeof(global::qj), "hfm") != null ||
-               AccessTools.Method(typeof(global::qj), "kcd") != null;
+        Plugin.FileLog("Backend inventory remove patch disabled for updated build; avoiding recursive offline-reward crash.");
+        return false;
     }
 
     private static System.Collections.Generic.IEnumerable<MethodBase> TargetMethods()
