@@ -3,15 +3,15 @@
 Trainer externo para **TaskbarHero** con bridge BepInEx IL2CPP. No usa hotkeys:
 todo se activa desde la ventana del trainer.
 
-![TaskbarHero Trainer 1.6](docs/taskbarhero-trainer-v1.6.png)
+![TaskbarHero Trainer 1.7](docs/taskbarhero-trainer-v1.7.png)
 
 ## Version actual
 
-**TaskbarHero Trainer 1.6**
+**TaskbarHero Trainer 1.7**
 
 Descarga recomendada:
 
-- [TaskbarHeroTrainer-v1.6.zip](https://github.com/elxokker/taskbarhero-trainer/releases/latest)
+- [TaskbarHeroTrainer-v1.7.zip](https://github.com/elxokker/taskbarhero-trainer/releases/latest)
 
 ## Que incluye
 
@@ -20,6 +20,7 @@ Descarga recomendada:
 - `+999.999.999 currency`, suma monedas al valor actual.
 - Desbloqueo y nivel de heroes.
 - Desbloqueo de inventario/alijo.
+- Desbloqueo de paginas/pestanas del alijo mediante `UnlockStashPageCount`.
 - Desbloqueo de mascotas.
 - Ajuste de puntos de habilidad a `0` o `999`.
 - `One hit kill`.
