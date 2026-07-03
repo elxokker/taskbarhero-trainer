@@ -23,7 +23,7 @@ public sealed class Plugin : BasePlugin
 {
     public const string PluginGuid = "xoker.taskbarhero.modmenu";
     public const string PluginName = "TaskbarHero Trainer Bridge";
-    public const string PluginVersion = "1.8.3";
+    public const string PluginVersion = "1.8.4";
     public const string PipeName = "TaskbarHeroTrainerPipe";
     private static readonly bool EnableRuntimeHarmonyPatches = false;
     internal static readonly bool EnableForcedSaveRequests = false;
@@ -32,10 +32,12 @@ public sealed class Plugin : BasePlugin
     private static ModActions _actions;
     private static TrainerPipeServer _pipeServer;
     private static Harmony _safeLifecycleHarmony;
+    private static int _safeGameplayPatchCount;
     private static int _shutdownStarted;
 
     internal static bool IsShuttingDown => _shutdownStarted != 0;
     internal static bool RuntimeHarmonyPatchesEnabled => EnableRuntimeHarmonyPatches;
+    internal static int SafeGameplayPatchCount => _safeGameplayPatchCount;
 
     public override void Load()
     {
@@ -94,7 +96,9 @@ public sealed class Plugin : BasePlugin
             stashUiPagePatches += TryPatchPostfix(_safeLifecycleHarmony, AccessTools.Method(typeof(global::TaskbarHero.UI.UI_RemakeStash), "hnd"), typeof(TrainerStashUiPageUnlockPatch), nameof(TrainerStashUiPageUnlockPatch.Postfix));
             stashUiPagePatches += TryPatchPostfix(_safeLifecycleHarmony, AccessTools.Method(typeof(global::TaskbarHero.UI.UI_RemakeStash), "OnEnable"), typeof(TrainerStashUiPageUnlockPatch), nameof(TrainerStashUiPageUnlockPatch.Postfix));
             int tradeShipUiPatches = 0;
-            FileLog($"Safe save lifecycle patches loaded: PostLoad={postLoad != null}, PreSave={preSave != null}, StashPageUI={stashUiPagePatches}, TradeShipUI={tradeShipUiPatches}.");
+            int gameplayPatches = InstallSelectiveGameplayPatches(_safeLifecycleHarmony);
+            _safeGameplayPatchCount = gameplayPatches;
+            FileLog($"Safe save lifecycle patches loaded: PostLoad={postLoad != null}, PreSave={preSave != null}, StashPageUI={stashUiPagePatches}, TradeShipUI={tradeShipUiPatches}, Gameplay={gameplayPatches}.");
             LogSource.LogInfo("Safe save lifecycle patches loaded");
         }
         catch (Exception ex)
@@ -119,6 +123,33 @@ public sealed class Plugin : BasePlugin
         catch (Exception ex)
         {
             FileLog($"Safe patch failed for {target.DeclaringType?.FullName}.{target.Name}: {ex.Message}");
+            return 0;
+        }
+    }
+
+    private static int InstallSelectiveGameplayPatches(Harmony harmony)
+    {
+        int patched = 0;
+        patched += TryPatchClass(harmony, typeof(GodModeHeroDamagePatch));
+
+        return patched;
+    }
+
+    private static int TryPatchClass(Harmony harmony, Type patchType)
+    {
+        if (harmony == null || patchType == null)
+        {
+            return 0;
+        }
+
+        try
+        {
+            var methods = harmony.CreateClassProcessor(patchType).Patch();
+            return methods?.Count ?? 0;
+        }
+        catch (Exception ex)
+        {
+            FileLog($"Safe patch class failed for {patchType.FullName}: {ex.Message}");
             return 0;
         }
     }
@@ -314,8 +345,11 @@ internal sealed class ModActions
     private readonly object _sync = new();
     private static float _desiredGameSpeed = 1f;
     private static long _lastGameSpeedReapplyLogTick;
+    private static long _lastGodModeReapplyLogTick;
     private static long _lastStashPageUiLogTick;
     private static global::TaskbarHero.PlayerSaveData _lastKnownSaveData;
+    private readonly Thread _gameplayReapplyThread;
+    private volatile bool _stopBackgroundActions;
 
     [ThreadStatic]
     private static bool _il2cppAttached;
@@ -335,8 +369,69 @@ internal sealed class ModActions
         public string RuntimeStashPageDetail;
     }
 
+    public ModActions()
+    {
+        _gameplayReapplyThread = new Thread(GameplayReapplyLoop)
+        {
+            IsBackground = true,
+            Name = "TaskbarHeroTrainerGameplayReapply"
+        };
+        _gameplayReapplyThread.Start();
+    }
+
     public void StopBackgroundActions()
     {
+        _stopBackgroundActions = true;
+        try
+        {
+            if (_gameplayReapplyThread != null && _gameplayReapplyThread.IsAlive && Thread.CurrentThread != _gameplayReapplyThread)
+            {
+                _gameplayReapplyThread.Join(1000);
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private void GameplayReapplyLoop()
+    {
+        Thread.Sleep(1500);
+        while (!_stopBackgroundActions && !Plugin.IsShuttingDown && !IsGameQuitting)
+        {
+            try
+            {
+                if (Math.Abs(_desiredGameSpeed - 1f) > GameSpeedEpsilon)
+                {
+                    ReapplyGameSpeedIfNeeded("background");
+                }
+
+                if (GodModeEnabled)
+                {
+                    ApplyGodModeStatusSafe("background");
+                    LogGodModeReapply();
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.FileLog("Gameplay reapply loop failed: " + ex.Message);
+            }
+
+            Thread.Sleep(500);
+        }
+    }
+
+    private static void LogGodModeReapply()
+    {
+        long now = Environment.TickCount64;
+        long previous = Interlocked.Read(ref _lastGodModeReapplyLogTick);
+        if (now - previous < 5000)
+        {
+            return;
+        }
+
+        Interlocked.Exchange(ref _lastGodModeReapplyLogTick, now);
+        Plugin.FileLog("God mode reaplicado desde background.");
     }
 
     internal static void BeginShutdown()
@@ -501,7 +596,7 @@ internal sealed class ModActions
                 string heroLevels = BuildHeroLevelSummary(save);
                 string status = manager == null
                     ? "Save manager no listo. Entra en partida y pulsa Refresh."
-                    : $"Runtime listo. Monedas {currencyCount}, heroes save {heroCount}/catalogo {heroCatalogCount} [{heroLevels}], inv {inventoryUnlocked}/{inventoryCount} ({inventoryEmpty} libres), alijo {stashUnlocked}/{stashCount}, trade ship {tradeUnlocked}/{tradeCount} catalogo {tradeCatalogCount}, items {itemCount}, mascotas {petUnlocked}/{petCount}, runtime patches {(Plugin.RuntimeHarmonyPatchesEnabled ? "ON" : "OFF")}, save forzado {(Plugin.EnableForcedSaveRequests ? "ON" : "OFF")}, hero bypass {((Plugin.RuntimeHarmonyPatchesEnabled || !Plugin.EnableForcedSaveRequests) && ForceHeroUnlockChecks ? "ON" : "OFF")}.";
+                    : $"Runtime listo. Monedas {currencyCount}, heroes save {heroCount}/catalogo {heroCatalogCount} [{heroLevels}], inv {inventoryUnlocked}/{inventoryCount} ({inventoryEmpty} libres), alijo {stashUnlocked}/{stashCount}, trade ship {tradeUnlocked}/{tradeCount} catalogo {tradeCatalogCount}, items {itemCount}, mascotas {petUnlocked}/{petCount}, runtime patches {(Plugin.RuntimeHarmonyPatchesEnabled ? "ON" : "OFF")}, gameplay patches {Plugin.SafeGameplayPatchCount}, save forzado {(Plugin.EnableForcedSaveRequests ? "ON" : "OFF")}, hero bypass {((Plugin.RuntimeHarmonyPatchesEnabled || !Plugin.EnableForcedSaveRequests) && ForceHeroUnlockChecks ? "ON" : "OFF")}.";
                 Plugin.FileLog(status);
                 return status;
             }
@@ -8573,6 +8668,8 @@ internal static class OneHitKillMonsterPatch
 [HarmonyPatch]
 internal static class GodModeHeroDamagePatch
 {
+    private static long _lastBlockedDamageLogTick;
+
     private static System.Collections.Generic.IEnumerable<MethodBase> TargetMethods()
     {
         return TrainerPatchDiscovery.FindDamageReceiverMethods(typeof(global::TaskbarHero.Hero));
@@ -8585,11 +8682,25 @@ internal static class GodModeHeroDamagePatch
             return true;
         }
 
+        LogBlockedDamage(__0.OriginDamage);
         __0.OriginDamage = 0f;
         __0.IsCritical = false;
         __0.FloatingDamageText = false;
         __0.PlayHitFeedBack = false;
         return false;
+    }
+
+    private static void LogBlockedDamage(float damage)
+    {
+        long now = Environment.TickCount64;
+        long previous = Interlocked.Read(ref _lastBlockedDamageLogTick);
+        if (now - previous < 3000)
+        {
+            return;
+        }
+
+        Interlocked.Exchange(ref _lastBlockedDamageLogTick, now);
+        Plugin.FileLog($"God mode bloqueo dano de heroe: {damage.ToString("0.##", CultureInfo.InvariantCulture)}.");
     }
 }
 

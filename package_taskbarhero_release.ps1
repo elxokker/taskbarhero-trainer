@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "1.8.3",
+    [string]$Version = "1.8.4",
     [string]$GameDir = "C:\Program Files (x86)\Steam\steamapps\common\TaskbarHero",
     [string]$BepInExTemplate = "C:\Users\xoker\Tools\BepInEx-UnityIL2CPP-x64-6.0.0-be.785",
     [string]$Unity6InteropPatch = "C:\Users\xoker\Tools\Il2CppInterop-Unity6-1.0.0\release",
