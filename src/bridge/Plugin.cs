@@ -23,7 +23,7 @@ public sealed class Plugin : BasePlugin
 {
     public const string PluginGuid = "xoker.taskbarhero.modmenu";
     public const string PluginName = "TaskbarHero Trainer Bridge";
-    public const string PluginVersion = "1.7.1";
+    public const string PluginVersion = "1.8";
     public const string PipeName = "TaskbarHeroTrainerPipe";
     private static readonly bool EnableRuntimeHarmonyPatches = false;
     internal static readonly bool EnableForcedSaveRequests = false;
@@ -93,7 +93,10 @@ public sealed class Plugin : BasePlugin
             int stashUiPagePatches = 0;
             stashUiPagePatches += TryPatchPostfix(_safeLifecycleHarmony, AccessTools.Method(typeof(global::TaskbarHero.UI.UI_RemakeStash), "hnd"), typeof(TrainerStashUiPageUnlockPatch), nameof(TrainerStashUiPageUnlockPatch.Postfix));
             stashUiPagePatches += TryPatchPostfix(_safeLifecycleHarmony, AccessTools.Method(typeof(global::TaskbarHero.UI.UI_RemakeStash), "OnEnable"), typeof(TrainerStashUiPageUnlockPatch), nameof(TrainerStashUiPageUnlockPatch.Postfix));
-            FileLog($"Safe save lifecycle patches loaded: PostLoad={postLoad != null}, PreSave={preSave != null}, StashPageUI={stashUiPagePatches}.");
+            int tradeShipUiPatches = 0;
+            tradeShipUiPatches += TryPatchPostfix(_safeLifecycleHarmony, AccessTools.Method(typeof(global::TaskbarHero.UI.UI_TradingStash), "hnd"), typeof(TrainerTradeShipUiUnlockPatch), nameof(TrainerTradeShipUiUnlockPatch.Postfix));
+            tradeShipUiPatches += TryPatchPostfix(_safeLifecycleHarmony, AccessTools.Method(typeof(global::TaskbarHero.UI.UI_TradingStash), "OnEnable"), typeof(TrainerTradeShipUiUnlockPatch), nameof(TrainerTradeShipUiUnlockPatch.Postfix));
+            FileLog($"Safe save lifecycle patches loaded: PostLoad={postLoad != null}, PreSave={preSave != null}, StashPageUI={stashUiPagePatches}, TradeShipUI={tradeShipUiPatches}.");
             LogSource.LogInfo("Safe save lifecycle patches loaded");
         }
         catch (Exception ex)
@@ -285,6 +288,7 @@ internal sealed class ModActions
     private const int GameSpeedStatusBoostSource = 941415;
     private const int StashPageUnlockSource = 941416;
     private const int TargetStashPageUnlockCount = 99;
+    private const int MaxSafeTradeShipSlots = 24;
     private const string PreferredHeroFormationFileName = "preferred_hero_formation.txt";
 
     private static readonly string[] SharedClassGearTypes =
@@ -319,10 +323,14 @@ internal sealed class ModActions
     {
         public int InventoryChanged;
         public int StashChanged;
+        public int TradeShipChanged;
+        public int TradeShipAdded;
+        public int TradeShipCatalogCount;
         public int RuntimeInventory;
         public int RuntimeStash;
         public int RuntimeStashPages;
         public int RuntimeStashTabs;
+        public int RuntimeTradeShipUi;
         public string RuntimeStashPageDetail;
     }
 
@@ -431,6 +439,7 @@ internal sealed class ModActions
             "SKILL_POINTS_0" => SetHeroAbilityPoints(0),
             "SKILL_POINTS_999" => SetHeroAbilityPoints(999),
             "UNLOCK_SLOTS" => UnlockInventoryAndStash(),
+            "UNLOCK_TRADE_SHIP" => UnlockTradeShipSlots(),
             "LIST_ITEM_KEYS" => ListKnownItemKeys(),
             "LIST_BEST_GEAR" => ListBestClassGearSets(),
             "GEM_PACK" => "Usa SOCKET_EQUIPPED_GEMS:Knight/Ranger/Sorcerer/Priest/Hunter/Slayer.",
@@ -481,6 +490,9 @@ internal sealed class ModActions
                 int inventoryEmpty = CountEmptyUnlockedInventory(save);
                 int stashCount = save?.stashSaveDatas?.Count ?? 0;
                 int stashUnlocked = CountUnlockedStash(save);
+                int tradeCount = save?.remakeTradingStashSaveDatas?.Count ?? 0;
+                int tradeUnlocked = CountUnlockedTradeShip(save);
+                int tradeCatalogCount = CountTradeShipCatalogSlots(GetDataManager());
                 int itemCount = save?.itemSaveDatas?.Count ?? 0;
                 int petCount = save?.PetSaveData?.Count ?? 0;
                 int petUnlocked = CountUnlockedPets(save);
@@ -488,7 +500,7 @@ internal sealed class ModActions
                 string heroLevels = BuildHeroLevelSummary(save);
                 string status = manager == null
                     ? "Save manager no listo. Entra en partida y pulsa Refresh."
-                    : $"Runtime listo. Monedas {currencyCount}, heroes save {heroCount}/catalogo {heroCatalogCount} [{heroLevels}], inv {inventoryUnlocked}/{inventoryCount} ({inventoryEmpty} libres), alijo {stashUnlocked}/{stashCount}, items {itemCount}, mascotas {petUnlocked}/{petCount}, runtime patches {(Plugin.RuntimeHarmonyPatchesEnabled ? "ON" : "OFF")}, save forzado {(Plugin.EnableForcedSaveRequests ? "ON" : "OFF")}, hero bypass {((Plugin.RuntimeHarmonyPatchesEnabled || !Plugin.EnableForcedSaveRequests) && ForceHeroUnlockChecks ? "ON" : "OFF")}.";
+                    : $"Runtime listo. Monedas {currencyCount}, heroes save {heroCount}/catalogo {heroCatalogCount} [{heroLevels}], inv {inventoryUnlocked}/{inventoryCount} ({inventoryEmpty} libres), alijo {stashUnlocked}/{stashCount}, trade ship {tradeUnlocked}/{tradeCount} catalogo {tradeCatalogCount}, items {itemCount}, mascotas {petUnlocked}/{petCount}, runtime patches {(Plugin.RuntimeHarmonyPatchesEnabled ? "ON" : "OFF")}, save forzado {(Plugin.EnableForcedSaveRequests ? "ON" : "OFF")}, hero bypass {((Plugin.RuntimeHarmonyPatchesEnabled || !Plugin.EnableForcedSaveRequests) && ForceHeroUnlockChecks ? "ON" : "OFF")}.";
                 Plugin.FileLog(status);
                 return status;
             }
@@ -648,9 +660,9 @@ internal sealed class ModActions
         int formationChanged = RestorePreferredHeroFormation(save, out string formationSummary);
         SlotUnlockResult slots = UnlockInventoryAndStashSaveData(save);
 
-        if (normalized > 0 || added > 0 || unlocked > 0 || formationChanged > 0 || slots.InventoryChanged > 0 || slots.StashChanged > 0)
+        if (normalized > 0 || added > 0 || unlocked > 0 || formationChanged > 0 || slots.InventoryChanged > 0 || slots.StashChanged > 0 || slots.TradeShipChanged > 0 || slots.TradeShipAdded > 0)
         {
-            Plugin.FileLog($"Save lifecycle unlock ({source}): heroes nuevos {added}, desbloqueados {unlocked}, catalogo {normalized}, formacion {formationSummary}, inv {slots.InventoryChanged}, alijo {slots.StashChanged}, niveles {BuildHeroLevelSummary(save)}. No forced save.");
+            Plugin.FileLog($"Save lifecycle unlock ({source}): heroes nuevos {added}, desbloqueados {unlocked}, catalogo {normalized}, formacion {formationSummary}, inv {slots.InventoryChanged}, alijo {slots.StashChanged}, trade {slots.TradeShipChanged}+{slots.TradeShipAdded}/{slots.TradeShipCatalogCount}, niveles {BuildHeroLevelSummary(save)}. No forced save.");
         }
     }
 
@@ -723,7 +735,7 @@ internal sealed class ModActions
             return "save=null";
         }
 
-        return $"heroes={save.heroSaveDatas?.Count ?? 0},items={save.itemSaveDatas?.Count ?? 0},inv={CountEmptyUnlockedInventory(save)}/{CountUnlockedInventory(save)} empty/unlocked,stash={CountUnlockedStash(save)}";
+        return $"heroes={save.heroSaveDatas?.Count ?? 0},items={save.itemSaveDatas?.Count ?? 0},inv={CountEmptyUnlockedInventory(save)}/{CountUnlockedInventory(save)} empty/unlocked,stash={CountUnlockedStash(save)},trade={CountUnlockedTradeShip(save)}/{save?.remakeTradingStashSaveDatas?.Count ?? 0}";
     }
 
     private static int UnlockExistingHeroSaves(global::TaskbarHero.PlayerSaveData save)
@@ -1131,13 +1143,33 @@ internal sealed class ModActions
                 SlotUnlockResult slots = UnlockInventoryAndStashInMemory(save);
                 string saveStatus = RequestSave();
                 string pageDetail = string.IsNullOrWhiteSpace(slots.RuntimeStashPageDetail) ? string.Empty : $" ({slots.RuntimeStashPageDetail})";
-                string status = $"Slots desbloqueados: inv {slots.InventoryChanged}, alijo {slots.StashChanged}; runtime inv {slots.RuntimeInventory}, alijo {slots.RuntimeStash}; paginas stash {slots.RuntimeStashPages}, tabs UI {slots.RuntimeStashTabs}{pageDetail}. {saveStatus}";
+                string status = $"Slots desbloqueados: inv {slots.InventoryChanged}, alijo {slots.StashChanged}, trade ship {slots.TradeShipChanged} desbloq + {slots.TradeShipAdded} nuevos de catalogo {slots.TradeShipCatalogCount}; runtime inv {slots.RuntimeInventory}, alijo {slots.RuntimeStash}; paginas stash {slots.RuntimeStashPages}, tabs UI {slots.RuntimeStashTabs}{pageDetail}, trade UI {slots.RuntimeTradeShipUi}. {saveStatus}";
                 Plugin.FileLog(status);
                 return status;
             }
             catch (Exception ex)
             {
                 return Fail("Unlock inventory fallo", ex);
+            }
+        }
+    }
+
+    public string UnlockTradeShipSlots()
+    {
+        lock (_sync)
+        {
+            try
+            {
+                var save = GetSaveData();
+                SlotUnlockResult slots = UnlockTradeShipSlotsInMemory(save);
+                string saveStatus = RequestSave();
+                string status = $"Trade Ship desbloqueado: {slots.TradeShipChanged} slots marcados, {slots.TradeShipAdded} slots nuevos, catalogo {slots.TradeShipCatalogCount}, UI {slots.RuntimeTradeShipUi}. No se tocaron items ni Steam slots. {saveStatus}";
+                Plugin.FileLog(status);
+                return status;
+            }
+            catch (Exception ex)
+            {
+                return Fail("Unlock trade ship fallo", ex);
             }
         }
     }
@@ -1150,6 +1182,15 @@ internal sealed class ModActions
         result.RuntimeStash = RefreshRuntimeStashSlots();
         result.RuntimeStashPages = ApplyStashPageRuntimeUnlock(out result.RuntimeStashPageDetail);
         result.RuntimeStashTabs = RefreshRuntimeStashTabButtons();
+        result.RuntimeTradeShipUi = RefreshRuntimeTradeShipUi();
+        return result;
+    }
+
+    private static SlotUnlockResult UnlockTradeShipSlotsInMemory(global::TaskbarHero.PlayerSaveData save)
+    {
+        SlotUnlockResult result = default;
+        UnlockTradeShipSlotsSaveData(save, ref result);
+        result.RuntimeTradeShipUi = RefreshRuntimeTradeShipUi();
         return result;
     }
 
@@ -1189,7 +1230,212 @@ internal sealed class ModActions
             }
         }
 
+        UnlockTradeShipSlotsSaveData(save, ref result);
         return result;
+    }
+
+    private static void UnlockTradeShipSlotsSaveData(global::TaskbarHero.PlayerSaveData save, ref SlotUnlockResult result)
+    {
+        if (save == null || save.Pointer == IntPtr.Zero)
+        {
+            return;
+        }
+
+        var targetIndices = CollectTradeShipCatalogIndices(GetDataManager());
+        result.TradeShipCatalogCount = targetIndices.Count;
+
+        if (save.remakeTradingStashSaveDatas == null)
+        {
+            save.remakeTradingStashSaveDatas = new Il2CppSystem.Collections.Generic.List<global::TaskbarHero.EasySaveData.RemakeTradingStashSaveData>();
+        }
+
+        var slots = save.remakeTradingStashSaveDatas;
+        var existing = new System.Collections.Generic.HashSet<int>();
+        for (int i = 0; i < slots.Count; i++)
+        {
+            var slot = slots[i];
+            if (slot == null)
+            {
+                continue;
+            }
+
+            existing.Add(slot.Index);
+            if (!slot.IsUnLock)
+            {
+                slot.IsUnLock = true;
+                result.TradeShipChanged++;
+            }
+        }
+
+        if (targetIndices.Count == 0)
+        {
+            return;
+        }
+
+        for (int i = 0; i < targetIndices.Count; i++)
+        {
+            int index = targetIndices[i];
+            if (existing.Contains(index))
+            {
+                continue;
+            }
+
+            var slot = new global::TaskbarHero.EasySaveData.RemakeTradingStashSaveData(index)
+            {
+                IsUnLock = true,
+                ItemUniqueId = 0UL
+            };
+            slots.Add(slot);
+            existing.Add(index);
+            result.TradeShipAdded++;
+        }
+    }
+
+    private static System.Collections.Generic.List<int> CollectTradeShipCatalogIndices(global::bas data)
+    {
+        var indices = new System.Collections.Generic.List<int>();
+        var seen = new System.Collections.Generic.HashSet<int>();
+        var catalog = data?.tradingStashInfoData;
+        int count = catalog?.Count ?? 0;
+        for (int i = 0; i < count && indices.Count < MaxSafeTradeShipSlots; i++)
+        {
+            var info = catalog[i];
+            if (!IsValid(info))
+            {
+                continue;
+            }
+
+            int index = info.Index;
+            if (index < 0 || index >= MaxSafeTradeShipSlots || !seen.Add(index))
+            {
+                continue;
+            }
+
+            indices.Add(index);
+        }
+
+        indices.Sort();
+        return indices;
+    }
+
+    private static int RefreshRuntimeTradeShipUi()
+    {
+        int changed = 0;
+        AttachIl2CppThread();
+        try
+        {
+            var uis = global::UnityEngine.Resources.FindObjectsOfTypeAll<global::TaskbarHero.UI.UI_TradingStash>();
+            int count = uis?.Length ?? 0;
+            for (int i = 0; i < count; i++)
+            {
+                changed += UnlockRuntimeTradeShipUi(uis[i]);
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.FileLog("RefreshRuntimeTradeShipUi failed: " + ex.Message);
+        }
+
+        return changed;
+    }
+
+    private static int UnlockRuntimeTradeShipUi(global::TaskbarHero.UI.UI_TradingStash ui)
+    {
+        if (!IsValid(ui))
+        {
+            return 0;
+        }
+
+        int changed = 0;
+        try
+        {
+            var slots = ReadPrivateField<Il2CppSystem.Collections.Generic.List<global::TaskbarHero.UI.TradingStashSlot>>(ui, "TradingStashSlot");
+            int count = slots?.Count ?? 0;
+            for (int i = 0; i < count; i++)
+            {
+                changed += UnlockRuntimeTradeShipSlotVisual(slots[i]);
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.FileLog("UnlockRuntimeTradeShipUi failed: " + ex.Message);
+        }
+
+        return changed;
+    }
+
+    private static int UnlockRuntimeTradeShipSlotVisual(global::TaskbarHero.UI.TradingStashSlot slot)
+    {
+        if (!IsValid(slot))
+        {
+            return 0;
+        }
+
+        int changed = 0;
+        try
+        {
+            var gameObject = slot.gameObject;
+            if (IsValid(gameObject) && !gameObject.activeSelf)
+            {
+                gameObject.SetActive(true);
+                changed++;
+            }
+
+            changed += SetGameObjectActive(ReadPrivateField<global::UnityEngine.GameObject>(slot, "Go_ManualLock"), false);
+
+            var unlockButton = ReadPrivateField<global::UnityEngine.UI.Button>(slot, "button_TryUnLock");
+            if (IsValid(unlockButton))
+            {
+                if (unlockButton.interactable)
+                {
+                    unlockButton.interactable = false;
+                    changed++;
+                }
+
+                changed += SetGameObjectActive(unlockButton.gameObject, false);
+            }
+
+            var costText = ReadPrivateField<global::UnityEngine.Component>(slot, "text_UnlockCost");
+            if (IsValid(costText))
+            {
+                changed += SetGameObjectActive(costText.gameObject, false);
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.FileLog("UnlockRuntimeTradeShipSlotVisual failed: " + ex.Message);
+        }
+
+        return changed;
+    }
+
+    private static T ReadPrivateField<T>(object instance, string fieldName) where T : class
+    {
+        if (instance == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var field = AccessTools.Field(instance.GetType(), fieldName);
+            return field?.GetValue(instance) as T;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static int SetGameObjectActive(global::UnityEngine.GameObject gameObject, bool active)
+    {
+        if (!IsValid(gameObject) || gameObject.activeSelf == active)
+        {
+            return 0;
+        }
+
+        gameObject.SetActive(active);
+        return 1;
     }
 
     public string CloneExistingItemsToEmptyInventorySlots()
@@ -1293,7 +1539,7 @@ internal sealed class ModActions
                 var slot = FindFirstEmptyUnlockedInventorySlot(save);
                 if (slot == null)
                 {
-                    return "No hay slot desbloqueado y vacio. Usa Unlock inventory/stash primero.";
+                    return "No hay slot desbloqueado y vacio. Usa Unlock inventory/stash/trade primero.";
                 }
 
                 ulong uniqueId = FindMaxKnownUniqueId(save) + 1UL;
@@ -2719,6 +2965,30 @@ internal sealed class ModActions
         catch (Exception ex)
         {
             Plugin.FileLog($"Stash page UI unlock failed ({source}): {ex.Message}");
+        }
+    }
+
+    internal static void ApplyTradeShipUnlockForUi(global::TaskbarHero.UI.UI_TradingStash ui, string source)
+    {
+        if (Plugin.IsShuttingDown || IsGameQuitting || !IsValid(ui))
+        {
+            return;
+        }
+
+        try
+        {
+            var save = GetSaveDataOrNull();
+            SlotUnlockResult slots = default;
+            UnlockTradeShipSlotsSaveData(save, ref slots);
+            int uiChanged = UnlockRuntimeTradeShipUi(ui);
+            if (slots.TradeShipChanged > 0 || slots.TradeShipAdded > 0 || uiChanged > 0)
+            {
+                Plugin.FileLog($"Trade Ship UI unlock ({source}): save {slots.TradeShipChanged}+{slots.TradeShipAdded}/{slots.TradeShipCatalogCount}, ui {uiChanged}.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.FileLog($"Trade Ship UI unlock failed ({source}): {ex.Message}");
         }
     }
 
@@ -4162,6 +4432,32 @@ internal sealed class ModActions
         }
 
         return count;
+    }
+
+    private static int CountUnlockedTradeShip(global::TaskbarHero.PlayerSaveData save)
+    {
+        int count = 0;
+        var slots = save?.remakeTradingStashSaveDatas;
+        if (slots == null)
+        {
+            return count;
+        }
+
+        for (int i = 0; i < slots.Count; i++)
+        {
+            var slot = slots[i];
+            if (slot != null && slot.IsUnLock)
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    private static int CountTradeShipCatalogSlots(global::bas data)
+    {
+        return CollectTradeShipCatalogIndices(data).Count;
     }
 
     private static int CountUnlockedPets(global::TaskbarHero.PlayerSaveData save)
@@ -7783,6 +8079,14 @@ internal static class TrainerStashUiPageUnlockPatch
     internal static void Postfix(global::TaskbarHero.UI.UI_RemakeStash __instance)
     {
         ModActions.ApplyStashPageUnlockForUi(__instance, "UI_RemakeStash");
+    }
+}
+
+internal static class TrainerTradeShipUiUnlockPatch
+{
+    internal static void Postfix(global::TaskbarHero.UI.UI_TradingStash __instance)
+    {
+        ModActions.ApplyTradeShipUnlockForUi(__instance, "UI_TradingStash");
     }
 }
 

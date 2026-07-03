@@ -20,7 +20,7 @@ internal static class Program
 
 internal sealed class TrainerForm : Form
 {
-    private const string TrainerVersion = "1.7.1";
+    private const string TrainerVersion = "1.8";
     private const string GameProcessName = "TaskBarHero";
     private const string PipeName = "TaskbarHeroTrainerPipe";
     private const int PipeTimeoutMs = 700;
@@ -163,7 +163,7 @@ internal sealed class TrainerForm : Form
 
         _currencyButton = CreateButton("+999.999.999 currency", () => SendCommand("CURRENCIES"));
         _heroesButton = CreateButton("Unlock + level heroes", () => SendCommand("HEROES"));
-        _unlockSlotsButton = CreateButton("Unlock inventory/stash", () => SendCommand("UNLOCK_SLOTS"));
+        _unlockSlotsButton = CreateButton("Unlock inventory/stash/trade", () => SendCommand("UNLOCK_SLOTS"));
         _petsButton = CreateButton("Unlock all pets", () => SendCommand("PETS"));
         _skillPointsZeroButton = CreateButton("Skill pts 0", () => SendCommand("SKILL_POINTS_0"));
         _skillPointsMaxButton = CreateButton("Skill pts 999", () => SendCommand("SKILL_POINTS_999"));
