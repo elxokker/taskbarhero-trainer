@@ -1,4 +1,4 @@
-# TaskbarHero Trainer 1.8.1 - instalacion y uso
+# TaskbarHero Trainer 1.8.2 - instalacion y uso
 
 Esta release incluye el trainer externo, el bridge BepInEx IL2CPP y el payload
 necesario para instalarlo en TaskbarHero.
@@ -6,7 +6,7 @@ necesario para instalarlo en TaskbarHero.
 ## Instalacion
 
 1. Cierra TaskbarHero.
-2. Extrae `TaskbarHeroTrainer-v1.8.1.zip` en una carpeta cualquiera.
+2. Extrae `TaskbarHeroTrainer-v1.8.2.zip` en una carpeta cualquiera.
 3. Abre PowerShell en esa carpeta.
 4. Ejecuta:
 
@@ -47,7 +47,8 @@ directamente desde Steam, el juego queda normal.
 
 - `+999.999.999 currency`: suma `999.999.999` a las monedas actuales.
 - `Unlock + level heroes`: desbloquea heroes y aplica nivel alto persistente.
-- `Unlock inventory/stash/trade`: desbloquea inventario, alijo, paginas del alijo y slots del Trade Ship.
+- `Unlock inventory/stash`: desbloquea inventario, alijo y paginas del alijo.
+- El Trade Ship no se desbloquea desde el trainer porque el upload a Steam/backend valida esos slots.
 - `Unlock all pets`: desbloquea mascotas.
 - `Skill pts 0`: deja los puntos libres en `0`.
 - `Skill pts 999`: deja los puntos libres en `999`.

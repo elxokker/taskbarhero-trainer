@@ -3,15 +3,15 @@
 Trainer externo para **TaskbarHero** con bridge BepInEx IL2CPP. No usa hotkeys:
 todo se activa desde la ventana del trainer.
 
-![TaskbarHero Trainer 1.8.1](docs/taskbarhero-trainer-v1.7.png)
+![TaskbarHero Trainer 1.8.2](docs/taskbarhero-trainer-v1.7.png)
 
 ## Version actual
 
-**TaskbarHero Trainer 1.8.1**
+**TaskbarHero Trainer 1.8.2**
 
 Descarga recomendada:
 
-- [TaskbarHeroTrainer-v1.8.1.zip](https://github.com/elxokker/taskbarhero-trainer/releases/latest)
+- [TaskbarHeroTrainer-v1.8.2.zip](https://github.com/elxokker/taskbarhero-trainer/releases/latest)
 
 ## Que incluye
 
@@ -19,10 +19,9 @@ Descarga recomendada:
 - `Refresh runtime` para reconectar con el juego.
 - `+999.999.999 currency`, suma monedas al valor actual.
 - Desbloqueo y nivel de heroes.
-- Desbloqueo de inventario/alijo/Trade Ship.
+- Desbloqueo de inventario/alijo.
 - Desbloqueo de paginas/pestanas del alijo mediante `UnlockStashPageCount`.
-- Desbloqueo de slots nuevos del Trade Ship contra el catalogo real del juego.
-- Correccion del Trade Ship para que los 10 slots desbloqueados se vean y sean usables tras el update.
+- El Trade Ship no se desbloquea desde el trainer: el upload a Steam/backend valida esos slots y rechaza los no autorizados.
 - Desbloqueo de mascotas.
 - Ajuste de puntos de habilidad a `0` o `999`.
 - `One hit kill`.

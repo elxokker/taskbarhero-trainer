@@ -23,7 +23,7 @@ public sealed class Plugin : BasePlugin
 {
     public const string PluginGuid = "xoker.taskbarhero.modmenu";
     public const string PluginName = "TaskbarHero Trainer Bridge";
-    public const string PluginVersion = "1.8.1";
+    public const string PluginVersion = "1.8.2";
     public const string PipeName = "TaskbarHeroTrainerPipe";
     private static readonly bool EnableRuntimeHarmonyPatches = false;
     internal static readonly bool EnableForcedSaveRequests = false;
@@ -94,8 +94,6 @@ public sealed class Plugin : BasePlugin
             stashUiPagePatches += TryPatchPostfix(_safeLifecycleHarmony, AccessTools.Method(typeof(global::TaskbarHero.UI.UI_RemakeStash), "hnd"), typeof(TrainerStashUiPageUnlockPatch), nameof(TrainerStashUiPageUnlockPatch.Postfix));
             stashUiPagePatches += TryPatchPostfix(_safeLifecycleHarmony, AccessTools.Method(typeof(global::TaskbarHero.UI.UI_RemakeStash), "OnEnable"), typeof(TrainerStashUiPageUnlockPatch), nameof(TrainerStashUiPageUnlockPatch.Postfix));
             int tradeShipUiPatches = 0;
-            tradeShipUiPatches += TryPatchPostfix(_safeLifecycleHarmony, AccessTools.Method(typeof(global::TaskbarHero.UI.UI_TradingStash), "hnd"), typeof(TrainerTradeShipUiUnlockPatch), nameof(TrainerTradeShipUiUnlockPatch.Postfix));
-            tradeShipUiPatches += TryPatchPostfix(_safeLifecycleHarmony, AccessTools.Method(typeof(global::TaskbarHero.UI.UI_TradingStash), "OnEnable"), typeof(TrainerTradeShipUiUnlockPatch), nameof(TrainerTradeShipUiUnlockPatch.Postfix));
             FileLog($"Safe save lifecycle patches loaded: PostLoad={postLoad != null}, PreSave={preSave != null}, StashPageUI={stashUiPagePatches}, TradeShipUI={tradeShipUiPatches}.");
             LogSource.LogInfo("Safe save lifecycle patches loaded");
         }
@@ -439,7 +437,7 @@ internal sealed class ModActions
             "SKILL_POINTS_0" => SetHeroAbilityPoints(0),
             "SKILL_POINTS_999" => SetHeroAbilityPoints(999),
             "UNLOCK_SLOTS" => UnlockInventoryAndStash(),
-            "UNLOCK_TRADE_SHIP" => UnlockTradeShipSlots(),
+            "UNLOCK_TRADE_SHIP" => "Trade Ship no se desbloquea desde el trainer: Steam/backend valida esos slots y rechaza los no autorizados.",
             "LIST_ITEM_KEYS" => ListKnownItemKeys(),
             "LIST_BEST_GEAR" => ListBestClassGearSets(),
             "GEM_PACK" => "Usa SOCKET_EQUIPPED_GEMS:Knight/Ranger/Sorcerer/Priest/Hunter/Slayer.",
@@ -660,9 +658,9 @@ internal sealed class ModActions
         int formationChanged = RestorePreferredHeroFormation(save, out string formationSummary);
         SlotUnlockResult slots = UnlockInventoryAndStashSaveData(save);
 
-        if (normalized > 0 || added > 0 || unlocked > 0 || formationChanged > 0 || slots.InventoryChanged > 0 || slots.StashChanged > 0 || slots.TradeShipChanged > 0 || slots.TradeShipAdded > 0)
+        if (normalized > 0 || added > 0 || unlocked > 0 || formationChanged > 0 || slots.InventoryChanged > 0 || slots.StashChanged > 0)
         {
-            Plugin.FileLog($"Save lifecycle unlock ({source}): heroes nuevos {added}, desbloqueados {unlocked}, catalogo {normalized}, formacion {formationSummary}, inv {slots.InventoryChanged}, alijo {slots.StashChanged}, trade {slots.TradeShipChanged}+{slots.TradeShipAdded}/{slots.TradeShipCatalogCount}, niveles {BuildHeroLevelSummary(save)}. No forced save.");
+            Plugin.FileLog($"Save lifecycle unlock ({source}): heroes nuevos {added}, desbloqueados {unlocked}, catalogo {normalized}, formacion {formationSummary}, inv {slots.InventoryChanged}, alijo {slots.StashChanged}, trade untouched, niveles {BuildHeroLevelSummary(save)}. No forced save.");
         }
     }
 
@@ -1143,7 +1141,7 @@ internal sealed class ModActions
                 SlotUnlockResult slots = UnlockInventoryAndStashInMemory(save);
                 string saveStatus = RequestSave();
                 string pageDetail = string.IsNullOrWhiteSpace(slots.RuntimeStashPageDetail) ? string.Empty : $" ({slots.RuntimeStashPageDetail})";
-                string status = $"Slots desbloqueados: inv {slots.InventoryChanged}, alijo {slots.StashChanged}, trade ship {slots.TradeShipChanged} desbloq + {slots.TradeShipAdded} nuevos de catalogo {slots.TradeShipCatalogCount}; runtime inv {slots.RuntimeInventory}, alijo {slots.RuntimeStash}; paginas stash {slots.RuntimeStashPages}, tabs UI {slots.RuntimeStashTabs}{pageDetail}, trade UI {slots.RuntimeTradeShipUi}. {saveStatus}";
+                string status = $"Slots desbloqueados: inv {slots.InventoryChanged}, alijo {slots.StashChanged}; runtime inv {slots.RuntimeInventory}, alijo {slots.RuntimeStash}; paginas stash {slots.RuntimeStashPages}, tabs UI {slots.RuntimeStashTabs}{pageDetail}. Trade Ship no se toca porque Steam/backend valida esos slots. {saveStatus}";
                 Plugin.FileLog(status);
                 return status;
             }
@@ -1156,22 +1154,7 @@ internal sealed class ModActions
 
     public string UnlockTradeShipSlots()
     {
-        lock (_sync)
-        {
-            try
-            {
-                var save = GetSaveData();
-                SlotUnlockResult slots = UnlockTradeShipSlotsInMemory(save);
-                string saveStatus = RequestSave();
-                string status = $"Trade Ship desbloqueado: {slots.TradeShipChanged} slots marcados, {slots.TradeShipAdded} slots nuevos, catalogo {slots.TradeShipCatalogCount}, UI {slots.RuntimeTradeShipUi}. No se tocaron items ni Steam slots. {saveStatus}";
-                Plugin.FileLog(status);
-                return status;
-            }
-            catch (Exception ex)
-            {
-                return Fail("Unlock trade ship fallo", ex);
-            }
-        }
+        return "Trade Ship no se desbloquea desde el trainer: Steam/backend valida esos slots y rechaza los no autorizados.";
     }
 
     private static SlotUnlockResult UnlockInventoryAndStashInMemory(global::TaskbarHero.PlayerSaveData save)
@@ -1182,7 +1165,6 @@ internal sealed class ModActions
         result.RuntimeStash = RefreshRuntimeStashSlots();
         result.RuntimeStashPages = ApplyStashPageRuntimeUnlock(out result.RuntimeStashPageDetail);
         result.RuntimeStashTabs = RefreshRuntimeStashTabButtons();
-        result.RuntimeTradeShipUi = RefreshRuntimeTradeShipUi();
         return result;
     }
 
@@ -1230,7 +1212,6 @@ internal sealed class ModActions
             }
         }
 
-        UnlockTradeShipSlotsSaveData(save, ref result);
         return result;
     }
 
@@ -1724,7 +1705,7 @@ internal sealed class ModActions
                 var slot = FindFirstEmptyUnlockedInventorySlot(save);
                 if (slot == null)
                 {
-                    return "No hay slot desbloqueado y vacio. Usa Unlock inventory/stash/trade primero.";
+                    return "No hay slot desbloqueado y vacio. Usa Unlock inventory/stash primero.";
                 }
 
                 ulong uniqueId = FindMaxKnownUniqueId(save) + 1UL;
@@ -3155,26 +3136,7 @@ internal sealed class ModActions
 
     internal static void ApplyTradeShipUnlockForUi(global::TaskbarHero.UI.UI_TradingStash ui, string source)
     {
-        if (Plugin.IsShuttingDown || IsGameQuitting || !IsValid(ui))
-        {
-            return;
-        }
-
-        try
-        {
-            var save = GetSaveDataOrNull();
-            SlotUnlockResult slots = default;
-            UnlockTradeShipSlotsSaveData(save, ref slots);
-            int uiChanged = UnlockRuntimeTradeShipUi(ui);
-            if (slots.TradeShipChanged > 0 || slots.TradeShipAdded > 0 || uiChanged > 0)
-            {
-                Plugin.FileLog($"Trade Ship UI unlock ({source}): save {slots.TradeShipChanged}+{slots.TradeShipAdded}/{slots.TradeShipCatalogCount}, ui {uiChanged}.");
-            }
-        }
-        catch (Exception ex)
-        {
-            Plugin.FileLog($"Trade Ship UI unlock failed ({source}): {ex.Message}");
-        }
+        Plugin.FileLog($"Trade Ship UI unlock skipped ({source}): Steam/backend controls usable slots.");
     }
 
     private static void LogStashPageUiRefresh(string source, int pages, int tabs, string detail)
