@@ -1,4 +1,4 @@
-# TaskbarHero Trainer 1.7 - instalacion y uso
+# TaskbarHero Trainer 1.7.1 - instalacion y uso
 
 Esta release incluye el trainer externo, el bridge BepInEx IL2CPP y el payload
 necesario para instalarlo en TaskbarHero.
@@ -6,7 +6,7 @@ necesario para instalarlo en TaskbarHero.
 ## Instalacion
 
 1. Cierra TaskbarHero.
-2. Extrae `TaskbarHeroTrainer-v1.7.zip` en una carpeta cualquiera.
+2. Extrae `TaskbarHeroTrainer-v1.7.1.zip` en una carpeta cualquiera.
 3. Abre PowerShell en esa carpeta.
 4. Ejecuta:
 
@@ -21,6 +21,8 @@ El instalador:
 - copia `TaskbarHeroModMenu.dll` a `BepInEx\plugins`;
 - aplica el parche persistente de heroes en `GameAssembly.dll` si coincide con
   la version esperada;
+- si Steam actualizo `GameAssembly.dll`, mueve interop/cache antiguos para que
+  BepInEx los regenere en el siguiente arranque;
 - deja Doorstop en `enabled = false` para que abrir el juego normal desde Steam
   no cargue el trainer;
 - abre `TaskbarHeroTrainer.exe` al terminar.

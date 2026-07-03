@@ -23,7 +23,7 @@ public sealed class Plugin : BasePlugin
 {
     public const string PluginGuid = "xoker.taskbarhero.modmenu";
     public const string PluginName = "TaskbarHero Trainer Bridge";
-    public const string PluginVersion = "1.7";
+    public const string PluginVersion = "1.7.1";
     public const string PipeName = "TaskbarHeroTrainerPipe";
     private static readonly bool EnableRuntimeHarmonyPatches = false;
     internal static readonly bool EnableForcedSaveRequests = false;
@@ -310,6 +310,7 @@ internal sealed class ModActions
     private static float _desiredGameSpeed = 1f;
     private static long _lastGameSpeedReapplyLogTick;
     private static long _lastStashPageUiLogTick;
+    private static global::TaskbarHero.PlayerSaveData _lastKnownSaveData;
 
     [ThreadStatic]
     private static bool _il2cppAttached;
@@ -629,6 +630,8 @@ internal sealed class ModActions
         {
             return;
         }
+
+        _lastKnownSaveData = save;
 
         if (IsSuspiciousFreshSave(save))
         {
@@ -2265,9 +2268,8 @@ internal sealed class ModActions
             var slotCache = FindRuntimeInventorySlot(slot.Index);
             if (IsValid(slotCache))
             {
-                steps += TryRuntimeCall("vg.jky", () => slotCache.jky(itemSave.UniqueId));
-                steps += TryRuntimeCall("vg.jrr", () => slotCache.jrr());
-                steps += TryRuntimeCall("vg.bpb", () => slotCache.bpb());
+                steps += TryRuntimeCall("vg set item", () => TryInvokeAnyInstanceMethod(slotCache, itemSave.UniqueId, "jky", "jkz"));
+                steps += TryRuntimeCall("vg refresh", () => TryInvokeAnyInstanceMethod(slotCache, Array.Empty<object>(), "jrr", "gqz", "jrs", "hto", "bpb"));
                 steps += TryRuntimeCall("ua.hqt", () => TryInvokeStaticMethod(inventoryRuntimeType, "hqt", itemSave.UniqueId, slotCache));
                 steps += TryRuntimeCall("ua.bgv", () => TryInvokeStaticMethod(inventoryRuntimeType, "bgv", itemSave.UniqueId, slotCache));
             }
@@ -2275,7 +2277,7 @@ internal sealed class ModActions
             var inventoryManager = GetLocalInventoryManager();
             if (IsValid(inventoryManager))
             {
-                steps += TryRuntimeCall("LocalInventoryManager.ksh", () => inventoryManager.ksh(slot.Index, itemSave.UniqueId));
+                steps += TryRuntimeCall("LocalInventoryManager set slot", () => TryInvokeAnyInstanceMethod(inventoryManager, new object[] { slot.Index, itemSave.UniqueId }, "ksh", "ksi", "ksj"));
             }
         }
 
@@ -2369,9 +2371,8 @@ internal sealed class ModActions
             return changed;
         }
 
-        changed += TryRuntimeCall("vg.jky reconcile", () => slotCache.jky(slot.ItemUniqueId));
-        changed += TryRuntimeCall("vg.jrr reconcile", () => slotCache.jrr());
-        changed += TryRuntimeCall("vg.bpb reconcile", () => slotCache.bpb());
+        changed += TryRuntimeCall("vg set item reconcile", () => TryInvokeAnyInstanceMethod(slotCache, slot.ItemUniqueId, "jky", "jkz"));
+        changed += TryRuntimeCall("vg refresh reconcile", () => TryInvokeAnyInstanceMethod(slotCache, Array.Empty<object>(), "jrr", "gqz", "jrs", "hto", "bpb"));
         return changed;
     }
 
@@ -2520,8 +2521,7 @@ internal sealed class ModActions
                     continue;
                 }
 
-                changed += TryRuntimeCall("vg.jrr", () => slot.jrr());
-                changed += TryRuntimeCall("vg.bpb", () => slot.bpb());
+                changed += TryRuntimeCall("vg refresh", () => TryInvokeAnyInstanceMethod(slot, Array.Empty<object>(), "jrr", "gqz", "jrs", "hto", "bpb"));
             }
 
             var inventoryRuntimeType = GameType("ua");
@@ -3076,6 +3076,30 @@ internal sealed class ModActions
             Plugin.FileLog($"Invoke {target?.GetType().Name ?? "null"}.{methodName} failed: {ex.Message}");
             return false;
         }
+    }
+
+    private static bool TryInvokeAnyInstanceMethod(object target, object arg, params string[] methodNames)
+    {
+        return TryInvokeAnyInstanceMethod(target, new[] { arg }, methodNames);
+    }
+
+    private static bool TryInvokeAnyInstanceMethod(object target, object[] args, params string[] methodNames)
+    {
+        foreach (string methodName in methodNames)
+        {
+            if (TryInvokeInstanceMethod(target, methodName, args))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static T TryInvokeInstanceObject<T>(object target, string methodName, params object[] args)
+        where T : class
+    {
+        return InvokeInstanceMethod(target, methodName, args) as T;
     }
 
     private static object TryInvokeStaticMethod(Type type, string methodName, params object[] args)
@@ -5170,7 +5194,7 @@ internal sealed class ModActions
         var inventoryManager = GetLocalInventoryManager();
         if (IsValid(inventoryManager))
         {
-            steps += TryRuntimeCall("LocalInventoryManager.ksh " + reason, () => inventoryManager.ksh(slot.Index, 0UL));
+            steps += TryRuntimeCall("LocalInventoryManager clear slot " + reason, () => TryInvokeAnyInstanceMethod(inventoryManager, new object[] { slot.Index, 0UL }, "ksh", "ksi", "ksj"));
         }
 
         slot.ItemUniqueId = 0UL;
@@ -5686,8 +5710,8 @@ internal sealed class ModActions
         int statModKey = 0;
         if (TryFindBestStatMod(data, statType, out var statMod, out statModKey, out tier))
         {
-            resolvedStatType = statMod.bgrj;
-            modType = statMod.bgrk;
+            resolvedStatType = statMod.bgrk;
+            modType = statMod.bgrl;
         }
 
         int value = GetBestEnchantValue(statType);
@@ -5724,8 +5748,8 @@ internal sealed class ModActions
         int statModKey = 0;
         if (TryFindBestStatMod(data, statType, out var statMod, out statModKey, out tier))
         {
-            statType = statMod.bgrj;
-            modType = statMod.bgrk;
+            statType = statMod.bgrk;
+            modType = statMod.bgrl;
         }
 
         int value = GetBestEnchantValue(statType);
@@ -5911,12 +5935,12 @@ internal sealed class ModActions
             }
 
             var material = GetMaterialInfo(data, item.ItemKey);
-            if (!IsValid(material) || material.bgpu != materialType)
+            if (!IsValid(material) || material.bgpv != materialType)
             {
                 continue;
             }
 
-            var statMod = GetStatModInfo(data, material.bgpt, material.bgpv);
+            var statMod = GetStatModInfo(data, material.bgpu, material.bgpw);
             bool hasStatMod = IsValid(statMod);
 
             int grade = GradeRank(item.GRADE.ToString());
@@ -5936,12 +5960,12 @@ internal sealed class ModActions
             {
                 ItemKey = item.ItemKey,
                 GradeRank = grade,
-                MaterialTier = material.bgpv,
-                StatModKey = material.bgpt,
+                MaterialTier = material.bgpw,
+                StatModKey = material.bgpu,
                 HasStatMod = hasStatMod,
-                StatType = hasStatMod ? statMod.bgrj : global::TaskbarHero.StatType.NONE,
-                ModType = hasStatMod ? statMod.bgrk : global::TaskbarHero.MODTYPE.ADDITIVE,
-                Value = hasStatMod ? statMod.bgrl : 0
+                StatType = hasStatMod ? statMod.bgrk : global::TaskbarHero.StatType.NONE,
+                ModType = hasStatMod ? statMod.bgrl : global::TaskbarHero.MODTYPE.ADDITIVE,
+                Value = hasStatMod ? statMod.bgrm : 0
             });
         }
 
@@ -6026,30 +6050,15 @@ internal sealed class ModActions
 
         try
         {
-            return data.mgj(materialKey);
+            return data.mgk(materialKey);
         }
         catch
         {
             // try next generated lookup name
         }
 
-        try
-        {
-            return data.lel(materialKey);
-        }
-        catch
-        {
-            // try next generated lookup name
-        }
-
-        try
-        {
-            return data.rf(materialKey);
-        }
-        catch
-        {
-            return null;
-        }
+        try { return TryInvokeInstanceObject<global::TaskbarHero.Data.MaterialInfoData>(data, "mgk", materialKey); } catch { }
+        return null;
     }
 
     private static global::TaskbarHero.Data.StatModInfoData GetStatModInfo(global::bas data, int statModKey, int tier)
@@ -6061,39 +6070,19 @@ internal sealed class ModActions
 
         try
         {
-            return data.mgg(statModKey, tier);
+            return data.mgh(statModKey, tier);
         }
         catch
         {
             // try next generated lookup name
         }
 
-        try
+        foreach (string name in new[] { "vs", "mxs", "fpt", "ded" })
         {
-            return data.ckh(statModKey, tier);
-        }
-        catch
-        {
-            // try next generated lookup name
+            try { return TryInvokeInstanceObject<global::TaskbarHero.Data.StatModInfoData>(data, name, statModKey, tier); } catch { }
         }
 
-        try
-        {
-            return data.bgz(statModKey, tier);
-        }
-        catch
-        {
-            // try next generated lookup name
-        }
-
-        try
-        {
-            return data.gtw(statModKey, tier);
-        }
-        catch
-        {
-            return null;
-        }
+        return null;
     }
 
     private static global::TaskbarHero.Data.LevelInfoData GetLevelInfo(global::bas data, int level)
@@ -6103,9 +6092,11 @@ internal sealed class ModActions
             return null;
         }
 
-        try { return data.imt(level); } catch { }
-        try { return data.hse(level); } catch { }
-        try { return data.hbn(level); } catch { }
+        try { return data.jse(level); } catch { }
+        try { return data.mwh(level); } catch { }
+        try { return data.dqw(level); } catch { }
+        try { return data.mia(level); } catch { }
+        try { return data.hmi(level); } catch { }
         return null;
     }
 
@@ -6116,10 +6107,12 @@ internal sealed class ModActions
             return null;
         }
 
-        try { return data.mff(petKey); } catch { }
-        try { return data.guy(petKey); } catch { }
-        try { return data.ccz(petKey); } catch { }
-        try { return data.hmz(petKey); } catch { }
+        try { return data.mfg(petKey); } catch { }
+        foreach (string name in new[] { "mfg", "beo" })
+        {
+            try { return TryInvokeInstanceObject<global::TaskbarHero.Data.PetInfoData>(data, name, petKey); } catch { }
+        }
+
         return null;
     }
 
@@ -6133,8 +6126,12 @@ internal sealed class ModActions
             return null;
         }
 
-        try { return data.mfj(tier, craftingType); } catch { }
-        try { return data.cqj(tier, craftingType); } catch { }
+        try { return data.mfk(tier, craftingType); } catch { }
+        foreach (string name in new[] { "mfk", "geg", "egd", "dct", "esj" })
+        {
+            try { return TryInvokeInstanceObject<global::TaskbarHero.Data.CraftingRecipeInfoData>(data, name, tier, craftingType); } catch { }
+        }
+
         return null;
     }
 
@@ -6674,7 +6671,7 @@ internal sealed class ModActions
     {
         var material = enchant.MaterialKey > 0 ? GetMaterialInfo(data, enchant.MaterialKey) : null;
         bool materialValid = IsValid(material);
-        var materialStatMod = materialValid ? GetStatModInfo(data, material.bgpt, material.bgpv) : null;
+        var materialStatMod = materialValid ? GetStatModInfo(data, material.bgpu, material.bgpw) : null;
         bool materialStatModValid = IsValid(materialStatMod);
         var enchantStatMod = enchant.StatModKey > 0 ? GetStatModInfo(data, enchant.StatModKey, enchant.Tier) : null;
         bool enchantStatModValid = IsValid(enchantStatMod);
@@ -7458,14 +7455,14 @@ internal sealed class ModActions
     private static global::bau GetSaveManager()
     {
         AttachIl2CppThread();
-        var manager = global::nq<global::bau>.bsfh;
+        var manager = global::nq<global::bau>.bsfi;
         return manager == null || manager.Pointer == IntPtr.Zero ? null : manager;
     }
 
     private static global::bas GetDataManager()
     {
         AttachIl2CppThread();
-        var manager = global::nq<global::bas>.bsfh;
+        var manager = global::nq<global::bas>.bsfi;
         return manager == null || manager.Pointer == IntPtr.Zero ? null : manager;
     }
 
@@ -7474,7 +7471,7 @@ internal sealed class ModActions
         AttachIl2CppThread();
         try
         {
-            var manager = global::TaskbarHero.Manager.LocalInventoryManager.bszg;
+            var manager = global::TaskbarHero.Manager.LocalInventoryManager.bszh;
             return manager == null || manager.Pointer == IntPtr.Zero ? null : manager;
         }
         catch (Exception ex)
@@ -7487,14 +7484,14 @@ internal sealed class ModActions
     private static global::TaskbarHero.Manager.PetManager GetPetManager()
     {
         AttachIl2CppThread();
-        var manager = global::nq<global::TaskbarHero.Manager.PetManager>.bsfh;
+        var manager = global::nq<global::TaskbarHero.Manager.PetManager>.bsfi;
         return manager == null || manager.Pointer == IntPtr.Zero ? null : manager;
     }
 
     private static global::TaskbarHero.StageManager GetStageManager()
     {
         AttachIl2CppThread();
-        var manager = global::nq<global::TaskbarHero.StageManager>.bsfh;
+        var manager = global::nq<global::TaskbarHero.StageManager>.bsfi;
         return manager == null || manager.Pointer == IntPtr.Zero ? null : manager;
     }
 
@@ -7508,7 +7505,7 @@ internal sealed class ModActions
 
         try
         {
-            var item = data.mgl(itemKey);
+            var item = data.mgm(itemKey);
             if (item != null && item.Pointer != IntPtr.Zero)
             {
                 return item;
@@ -7521,7 +7518,7 @@ internal sealed class ModActions
 
         try
         {
-            var item = data.cgx(itemKey);
+            var item = data.gvd(itemKey);
             if (item != null && item.Pointer != IntPtr.Zero)
             {
                 return item;
@@ -7529,7 +7526,23 @@ internal sealed class ModActions
         }
         catch (Exception ex)
         {
-            Plugin.FileLog($"cgx item lookup failed for {itemKey}: {ex.Message}");
+            Plugin.FileLog($"gvd item lookup failed for {itemKey}: {ex.Message}");
+        }
+
+        foreach (string name in new[] { "mjq", "gxm", "jno" })
+        {
+            try
+            {
+                var item = TryInvokeInstanceObject<global::TaskbarHero.Data.ItemInfoData>(data, name, itemKey);
+                if (item != null && item.Pointer != IntPtr.Zero)
+                {
+                    return item;
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.FileLog($"{name} item lookup failed for {itemKey}: {ex.Message}");
+            }
         }
 
         return null;
@@ -7669,19 +7682,19 @@ internal sealed class ModActions
         }
         catch
         {
-            manager.kqv(source, status, value);
+            foreach (string methodName in new[] { "hpm", "kqx", "nit", "cic", "jqv", "cgm", "mkr", "kqz", "fql", "bfx" })
+            {
+                if (TryInvokeInstanceMethod(manager, methodName, source, status, value))
+                {
+                    return;
+                }
+            }
         }
     }
 
     private static global::TaskbarHero.PlayerSaveData GetSaveData()
     {
-        var manager = GetSaveManager();
-        if (manager == null)
-        {
-            throw new InvalidOperationException("Save manager no listo.");
-        }
-
-        var save = GetSaveDataFromManager(manager);
+        var save = GetSaveDataOrNull();
         if (save == null || save.Pointer == IntPtr.Zero)
         {
             throw new InvalidOperationException("PlayerSaveData no cargado.");
@@ -7693,7 +7706,14 @@ internal sealed class ModActions
     private static global::TaskbarHero.PlayerSaveData GetSaveDataOrNull()
     {
         var manager = GetSaveManager();
-        return manager == null ? null : GetSaveDataFromManager(manager);
+        var save = manager == null ? null : GetSaveDataFromManager(manager);
+        if (save != null && save.Pointer != IntPtr.Zero)
+        {
+            _lastKnownSaveData = save;
+            return save;
+        }
+
+        return _lastKnownSaveData == null || _lastKnownSaveData.Pointer == IntPtr.Zero ? null : _lastKnownSaveData;
     }
 
     private static global::TaskbarHero.PlayerSaveData GetSaveDataFromManager(global::bau manager)

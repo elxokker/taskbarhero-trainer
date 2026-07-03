@@ -3,15 +3,15 @@
 Trainer externo para **TaskbarHero** con bridge BepInEx IL2CPP. No usa hotkeys:
 todo se activa desde la ventana del trainer.
 
-![TaskbarHero Trainer 1.7](docs/taskbarhero-trainer-v1.7.png)
+![TaskbarHero Trainer 1.7.1](docs/taskbarhero-trainer-v1.7.png)
 
 ## Version actual
 
-**TaskbarHero Trainer 1.7**
+**TaskbarHero Trainer 1.7.1**
 
 Descarga recomendada:
 
-- [TaskbarHeroTrainer-v1.7.zip](https://github.com/elxokker/taskbarhero-trainer/releases/latest)
+- [TaskbarHeroTrainer-v1.7.1.zip](https://github.com/elxokker/taskbarhero-trainer/releases/latest)
 
 ## Que incluye
 
@@ -29,6 +29,8 @@ Descarga recomendada:
 - Creacion de mejor equipo por clase.
 - Gemas + socket por clase sobre equipo equipado.
 - Reparacion de duplicados de equipo equipado.
+- Compatibilidad con TaskbarHero `1.00.24`: regenera interop/cache si Steam
+  actualizo `GameAssembly.dll` y reaplica el parche persistente de heroes.
 
 ## Instalacion rapida
 

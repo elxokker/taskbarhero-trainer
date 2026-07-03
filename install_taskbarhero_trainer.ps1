@@ -119,7 +119,10 @@ function Patch-GameAssemblyDlcCheck([string]$Path, [string]$GameRoot) {
         return
     }
 
-    $offset = 0xC1A9C0
+    $candidates = @(
+        @{ Version = "1.00.24"; Offset = 0xC4B8F0 },
+        @{ Version = "pre-1.00.24"; Offset = 0xC1A9C0 }
+    )
     $expected = Convert-HexToBytes "40534883ec20807938008bdac7442438"
     $patched = Convert-HexToBytes "B801000000C3"
     $buffer = New-Object byte[] $expected.Length
@@ -132,22 +135,29 @@ function Patch-GameAssemblyDlcCheck([string]$Path, [string]$GameRoot) {
     }
 
     try {
-        $stream.Position = $offset
-        $read = $stream.Read($buffer, 0, $buffer.Length)
-        if ($read -ne $buffer.Length) {
-            Write-Host "Aviso: GameAssembly.dll demasiado corto; no se aplica parche de heroes persistentes."
-            return
+        $selected = $null
+        foreach ($candidate in $candidates) {
+            $stream.Position = [int64]$candidate.Offset
+            $read = $stream.Read($buffer, 0, $buffer.Length)
+            if ($read -ne $buffer.Length) {
+                continue
+            }
+
+            $currentPatch = New-Object byte[] $patched.Length
+            [Array]::Copy($buffer, 0, $currentPatch, 0, $patched.Length)
+            if (Same-Bytes $currentPatch $patched) {
+                Write-Host "Parche de heroes persistentes ya estaba aplicado en GameAssembly.dll ($($candidate.Version))."
+                return
+            }
+
+            if (Same-Bytes $buffer $expected) {
+                $selected = $candidate
+                break
+            }
         }
 
-        $currentPatch = New-Object byte[] $patched.Length
-        [Array]::Copy($buffer, 0, $currentPatch, 0, $patched.Length)
-        if (Same-Bytes $currentPatch $patched) {
-            Write-Host "Parche de heroes persistentes ya estaba aplicado en GameAssembly.dll."
-            return
-        }
-
-        if (-not (Same-Bytes $buffer $expected)) {
-            Write-Host "Aviso: GameAssembly.dll no coincide con la version esperada; no se aplica parche de heroes persistentes."
+        if ($null -eq $selected) {
+            Write-Host "Aviso: GameAssembly.dll no coincide con las versiones soportadas; no se aplica parche de heroes persistentes."
             return
         }
     } finally {
@@ -156,7 +166,7 @@ function Patch-GameAssemblyDlcCheck([string]$Path, [string]$GameRoot) {
 
     $backupRoot = Join-Path $GameRoot "TaskbarHeroTrainer_Backups"
     New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
-    $backupPath = Join-Path $backupRoot ("GameAssembly_before_dlc_hbo_patch_" + (Get-Date -Format "yyyyMMdd_HHmmss") + ".dll")
+    $backupPath = Join-Path $backupRoot ("GameAssembly_before_dlc_hcg_patch_" + (Get-Date -Format "yyyyMMdd_HHmmss") + ".dll")
     try {
         Copy-Item -LiteralPath $Path -Destination $backupPath -Force
     } catch [System.IO.IOException] {
@@ -173,20 +183,54 @@ function Patch-GameAssemblyDlcCheck([string]$Path, [string]$GameRoot) {
 
     try {
         $verify = New-Object byte[] $expected.Length
-        $stream.Position = $offset
+        $stream.Position = [int64]$selected.Offset
         $read = $stream.Read($verify, 0, $verify.Length)
         if ($read -ne $verify.Length -or -not (Same-Bytes $verify $expected)) {
             Write-Host "Aviso: GameAssembly.dll cambio durante la instalacion; no se aplica parche de heroes persistentes."
             return
         }
 
-        $stream.Position = $offset
+        $stream.Position = [int64]$selected.Offset
         $stream.Write($patched, 0, $patched.Length)
         $stream.Flush()
-        Write-Host "Parche de heroes persistentes aplicado. Backup: $backupPath"
+        Write-Host "Parche de heroes persistentes aplicado ($($selected.Version)). Backup: $backupPath"
     } finally {
         $stream.Dispose()
     }
+}
+
+function Reset-InteropIfStale([string]$GameRoot, [string]$GameAssemblyPath, [string]$InteropPath) {
+    if (-not (Test-Path $GameAssemblyPath) -or -not (Test-Path $InteropPath)) {
+        return
+    }
+
+    $gameAssembly = Get-Item -LiteralPath $GameAssemblyPath
+    $interop = Get-Item -LiteralPath $InteropPath
+    if ($interop.LastWriteTimeUtc -ge $gameAssembly.LastWriteTimeUtc) {
+        return
+    }
+
+    $fullRoot = [System.IO.Path]::GetFullPath($GameRoot).TrimEnd("\")
+    $backupRoot = Join-Path $GameRoot ("TaskbarHeroTrainer_Backup_InteropRefresh_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
+    New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
+
+    foreach ($relative in @("BepInEx\interop", "BepInEx\cache")) {
+        $path = Join-Path $GameRoot $relative
+        if (-not (Test-Path $path)) {
+            continue
+        }
+
+        $fullPath = [System.IO.Path]::GetFullPath($path)
+        if (-not $fullPath.StartsWith($fullRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Ruta fuera de GameDir al refrescar interop: $fullPath"
+        }
+
+        $target = Join-Path $backupRoot $relative
+        New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
+        Move-Item -LiteralPath $path -Destination $target -Force
+    }
+
+    Write-Host "Interop/cache eran de una version anterior y se han movido para regenerarse al abrir el juego. Backup: $backupRoot"
 }
 
 if (Test-Path $bepInExPayload) {
@@ -217,6 +261,7 @@ if (-not (Test-Path $coreDll)) {
 New-Item -ItemType Directory -Path $pluginsDir -Force | Out-Null
 Copy-Item -LiteralPath $bridgeSource -Destination (Join-Path $pluginsDir "TaskbarHeroModMenu.dll") -Force
 Patch-GameAssemblyDlcCheck $gameAssemblyDll $GameDir
+Reset-InteropIfStale $GameDir $gameAssemblyDll $interopDll
 
 if (Test-Path $doorstopConfig) {
     $text = Get-Content -LiteralPath $doorstopConfig -Raw
