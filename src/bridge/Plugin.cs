@@ -23,7 +23,7 @@ public sealed class Plugin : BasePlugin
 {
     public const string PluginGuid = "xoker.taskbarhero.modmenu";
     public const string PluginName = "TaskbarHero Trainer Bridge";
-    public const string PluginVersion = "1.8";
+    public const string PluginVersion = "1.8.1";
     public const string PipeName = "TaskbarHeroTrainerPipe";
     private static readonly bool EnableRuntimeHarmonyPatches = false;
     internal static readonly bool EnableForcedSaveRequests = false;
@@ -1349,12 +1349,14 @@ internal sealed class ModActions
         int changed = 0;
         try
         {
-            var slots = ReadPrivateField<Il2CppSystem.Collections.Generic.List<global::TaskbarHero.UI.TradingStashSlot>>(ui, "TradingStashSlot");
+            var slots = ui.TradingStashSlot ?? ReadPrivateField<Il2CppSystem.Collections.Generic.List<global::TaskbarHero.UI.TradingStashSlot>>(ui, "TradingStashSlot");
             int count = slots?.Count ?? 0;
             for (int i = 0; i < count; i++)
             {
-                changed += UnlockRuntimeTradeShipSlotVisual(slots[i]);
+                changed += BindAndUnlockRuntimeTradeShipSlotVisual(slots[i], i, ui.m_slotScrollRect);
             }
+
+            changed += UnlockRuntimeTradeShipSlotVisualsByHierarchy(ui);
         }
         catch (Exception ex)
         {
@@ -1362,6 +1364,176 @@ internal sealed class ModActions
         }
 
         return changed;
+    }
+
+    private static int BindAndUnlockRuntimeTradeShipSlotVisual(global::TaskbarHero.UI.TradingStashSlot slot, int index, global::UnityEngine.UI.ScrollRect scrollRect)
+    {
+        int changed = 0;
+        if (!IsValid(slot))
+        {
+            return changed;
+        }
+
+        try
+        {
+            var cache = GetOrCreateTradeShipCache(index);
+            if (IsValid(cache))
+            {
+                changed += TryRuntimeCall("TradingStashSlot.lkj " + index, () => slot.lkj(cache, index, scrollRect));
+            }
+
+            changed += UnlockRuntimeTradeShipSlotVisual(slot);
+            changed += HideEmptyTradeShipCooldown(slot, index);
+        }
+        catch (Exception ex)
+        {
+            Plugin.FileLog($"BindAndUnlockRuntimeTradeShipSlotVisual failed index={index}: {ex.Message}");
+        }
+
+        return changed;
+    }
+
+    private static global::TaskbarHero.TradingStashCache GetOrCreateTradeShipCache(int index)
+    {
+        var cache = FindRuntimeTradingStashSlot(index);
+        if (IsValid(cache))
+        {
+            return cache;
+        }
+
+        var info = FindTradeShipInfo(index);
+        var saveSlot = FindTradeShipSaveSlot(GetSaveDataOrNull(), index);
+        if (IsValid(info) && saveSlot != null)
+        {
+            try
+            {
+                return new global::TaskbarHero.TradingStashCache(info, saveSlot);
+            }
+            catch (Exception ex)
+            {
+                Plugin.FileLog($"Create TradingStashCache failed index={index}: {ex.Message}");
+            }
+        }
+
+        return null;
+    }
+
+    private static global::TaskbarHero.Data.TradingStashInfoData FindTradeShipInfo(int index)
+    {
+        var catalog = GetDataManager()?.tradingStashInfoData;
+        int count = catalog?.Count ?? 0;
+        for (int i = 0; i < count; i++)
+        {
+            var info = catalog[i];
+            if (IsValid(info) && info.Index == index)
+            {
+                return info;
+            }
+        }
+
+        return null;
+    }
+
+    private static global::TaskbarHero.EasySaveData.RemakeTradingStashSaveData FindTradeShipSaveSlot(global::TaskbarHero.PlayerSaveData save, int index)
+    {
+        var slots = save?.remakeTradingStashSaveDatas;
+        int count = slots?.Count ?? 0;
+        for (int i = 0; i < count; i++)
+        {
+            var slot = slots[i];
+            if (slot != null && slot.Index == index)
+            {
+                return slot;
+            }
+        }
+
+        return null;
+    }
+
+    private static int HideEmptyTradeShipCooldown(global::TaskbarHero.UI.TradingStashSlot slot, int index)
+    {
+        var saveSlot = FindTradeShipSaveSlot(GetSaveDataOrNull(), index);
+        if (saveSlot == null || saveSlot.ItemUniqueId != 0UL)
+        {
+            return 0;
+        }
+
+        int changed = 0;
+        try
+        {
+            if (IsValid(slot.m_coolTimeViewBox))
+            {
+                changed += SetGameObjectActive(slot.m_coolTimeViewBox.gameObject, false);
+            }
+        }
+        catch { }
+
+        changed += SetNamedChildActive(slot.transform, "CooldownBox", false);
+        return changed;
+    }
+
+    private static int UnlockRuntimeTradeShipSlotVisualsByHierarchy(global::TaskbarHero.UI.UI_TradingStash ui)
+    {
+        int changed = 0;
+        int slotIndex = 0;
+        UnlockRuntimeTradeShipSlotVisualsByHierarchy(ui.transform, ui.m_slotScrollRect, ref changed, ref slotIndex, 0, 260);
+        return changed;
+    }
+
+    private static void UnlockRuntimeTradeShipSlotVisualsByHierarchy(global::UnityEngine.Transform transform, global::UnityEngine.UI.ScrollRect scrollRect, ref int changed, ref int slotIndex, int depth, int maxNodes)
+    {
+        if (!IsValid(transform) || maxNodes <= 0 || depth > 12)
+        {
+            return;
+        }
+
+        var gameObject = transform.gameObject;
+        var slot = gameObject.GetComponent<global::TaskbarHero.UI.TradingStashSlot>();
+        bool looksLikeSlot = IsValid(slot) || (gameObject.name?.StartsWith("TradingStashSlot", StringComparison.Ordinal) ?? false);
+        if (looksLikeSlot)
+        {
+            if (!gameObject.activeSelf)
+            {
+                gameObject.SetActive(true);
+                changed++;
+            }
+
+            if (IsValid(slot))
+            {
+                changed += BindAndUnlockRuntimeTradeShipSlotVisual(slot, slotIndex, scrollRect);
+                slotIndex++;
+            }
+            else
+            {
+                changed += SetNamedChildActive(transform, "Locked", false);
+                changed += SetNamedChildActive(transform, "ManualLocked", false);
+                changed += SetNamedChildActive(transform, "button_interaction_TryUnlock", false);
+            }
+        }
+
+        int children = transform.childCount;
+        for (int i = 0; i < children && maxNodes > 0; i++, maxNodes--)
+        {
+            UnlockRuntimeTradeShipSlotVisualsByHierarchy(transform.GetChild(i), scrollRect, ref changed, ref slotIndex, depth + 1, maxNodes);
+        }
+    }
+
+    private static int SetNamedChildActive(global::UnityEngine.Transform parent, string childName, bool active)
+    {
+        if (!IsValid(parent))
+        {
+            return 0;
+        }
+
+        try
+        {
+            var child = parent.Find(childName);
+            return IsValid(child) ? SetGameObjectActive(child.gameObject, active) : 0;
+        }
+        catch
+        {
+            return 0;
+        }
     }
 
     private static int UnlockRuntimeTradeShipSlotVisual(global::TaskbarHero.UI.TradingStashSlot slot)
@@ -1418,13 +1590,26 @@ internal sealed class ModActions
 
         try
         {
-            var field = AccessTools.Field(instance.GetType(), fieldName);
+            var field = AccessTools.Field(GetDeclaredInteropType(instance), fieldName) ??
+                        AccessTools.Field(instance.GetType(), fieldName);
             return field?.GetValue(instance) as T;
         }
         catch
         {
             return null;
         }
+    }
+
+    private static Type GetDeclaredInteropType(object instance)
+    {
+        return instance switch
+        {
+            global::TaskbarHero.UI.UI_TradingStash => typeof(global::TaskbarHero.UI.UI_TradingStash),
+            global::TaskbarHero.UI.TradingStashSlot => typeof(global::TaskbarHero.UI.TradingStashSlot),
+            global::TaskbarHero.UI.UI_RemakeStash => typeof(global::TaskbarHero.UI.UI_RemakeStash),
+            global::TaskbarHero.UI.StashTabButton => typeof(global::TaskbarHero.UI.StashTabButton),
+            _ => instance.GetType()
+        };
     }
 
     private static int SetGameObjectActive(global::UnityEngine.GameObject gameObject, bool active)
