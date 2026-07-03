@@ -23,7 +23,7 @@ public sealed class Plugin : BasePlugin
 {
     public const string PluginGuid = "xoker.taskbarhero.modmenu";
     public const string PluginName = "TaskbarHero Trainer Bridge";
-    public const string PluginVersion = "1.8.4";
+    public const string PluginVersion = "1.8.5";
     public const string PipeName = "TaskbarHeroTrainerPipe";
     private static readonly bool EnableRuntimeHarmonyPatches = false;
     internal static readonly bool EnableForcedSaveRequests = false;
@@ -406,7 +406,7 @@ internal sealed class ModActions
                     ReapplyGameSpeedIfNeeded("background");
                 }
 
-                if (GodModeEnabled)
+                if (GodModeEnabled && ShouldRunGodModeBackgroundReapply())
                 {
                     ApplyGodModeStatusSafe("background");
                     LogGodModeReapply();
@@ -423,15 +423,20 @@ internal sealed class ModActions
 
     private static void LogGodModeReapply()
     {
+        Plugin.FileLog("God mode reaplicado desde background.");
+    }
+
+    private static bool ShouldRunGodModeBackgroundReapply()
+    {
         long now = Environment.TickCount64;
         long previous = Interlocked.Read(ref _lastGodModeReapplyLogTick);
         if (now - previous < 5000)
         {
-            return;
+            return false;
         }
 
         Interlocked.Exchange(ref _lastGodModeReapplyLogTick, now);
-        Plugin.FileLog("God mode reaplicado desde background.");
+        return true;
     }
 
     internal static void BeginShutdown()
@@ -3494,17 +3499,11 @@ internal sealed class ModActions
     {
         int armor = enabled ? 100_000_000 : 0;
         int armorPercent = enabled ? 100_000 : 0;
-        int attackDamage = enabled ? 10_000_000 : 0;
-        int attackDamagePercent = enabled ? 10_000 : 0;
-        int attackSpeed = enabled ? 2_000 : 0;
 
         var bonuses = new (global::TaskbarHero.StatusSystem.EAccountStatus Status, int Value)[]
         {
             (global::TaskbarHero.StatusSystem.EAccountStatus.AllHeroArmor, armor),
-            (global::TaskbarHero.StatusSystem.EAccountStatus.AllHeroArmorPercent, armorPercent),
-            (global::TaskbarHero.StatusSystem.EAccountStatus.AllHeroAttackDamage, attackDamage),
-            (global::TaskbarHero.StatusSystem.EAccountStatus.AllHeroAttackDamagePercent, attackDamagePercent),
-            (global::TaskbarHero.StatusSystem.EAccountStatus.AllHeroAttackSpeed, attackSpeed)
+            (global::TaskbarHero.StatusSystem.EAccountStatus.AllHeroArmorPercent, armorPercent)
         };
 
         var summary = new StringBuilder();
@@ -8687,7 +8686,8 @@ internal static class GodModeHeroDamagePatch
         __0.IsCritical = false;
         __0.FloatingDamageText = false;
         __0.PlayHitFeedBack = false;
-        return false;
+        __0.PlayHitSound = false;
+        return true;
     }
 
     private static void LogBlockedDamage(float damage)

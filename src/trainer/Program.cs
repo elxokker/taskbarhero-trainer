@@ -20,7 +20,7 @@ internal static class Program
 
 internal sealed class TrainerForm : Form
 {
-    private const string TrainerVersion = "1.8.4";
+    private const string TrainerVersion = "1.8.5";
     private const string GameProcessName = "TaskBarHero";
     private const string PipeName = "TaskbarHeroTrainerPipe";
     private const int PipeTimeoutMs = 700;
