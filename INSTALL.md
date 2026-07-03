@@ -1,4 +1,4 @@
-# TaskbarHero Trainer 1.8.2 - instalacion y uso
+# TaskbarHero Trainer 1.8.3 - instalacion y uso
 
 Esta release incluye el trainer externo, el bridge BepInEx IL2CPP y el payload
 necesario para instalarlo en TaskbarHero.
@@ -6,7 +6,7 @@ necesario para instalarlo en TaskbarHero.
 ## Instalacion
 
 1. Cierra TaskbarHero.
-2. Extrae `TaskbarHeroTrainer-v1.8.2.zip` en una carpeta cualquiera.
+2. Extrae `TaskbarHeroTrainer-v1.8.3.zip` en una carpeta cualquiera.
 3. Abre PowerShell en esa carpeta.
 4. Ejecuta:
 

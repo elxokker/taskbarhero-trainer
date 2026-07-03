@@ -23,7 +23,7 @@ public sealed class Plugin : BasePlugin
 {
     public const string PluginGuid = "xoker.taskbarhero.modmenu";
     public const string PluginName = "TaskbarHero Trainer Bridge";
-    public const string PluginVersion = "1.8.2";
+    public const string PluginVersion = "1.8.3";
     public const string PipeName = "TaskbarHeroTrainerPipe";
     private static readonly bool EnableRuntimeHarmonyPatches = false;
     internal static readonly bool EnableForcedSaveRequests = false;
@@ -285,6 +285,7 @@ internal sealed class ModActions
     private const float GameSpeedEpsilon = 0.001f;
     private const int GameSpeedStatusBoostSource = 941415;
     private const int StashPageUnlockSource = 941416;
+    private const int GodModeStatusBoostSource = 941417;
     private const int TargetStashPageUnlockCount = 99;
     private const int MaxSafeTradeShipSlots = 24;
     private const string PreferredHeroFormationFileName = "preferred_hero_formation.txt";
@@ -305,6 +306,8 @@ internal sealed class ModActions
     internal static volatile bool GodModeEnabled;
     internal static volatile bool ForceHeroUnlockChecks = true;
     internal static volatile bool ForceDlcOwnershipChecks = true;
+    internal static volatile bool ForceSkillPointPersistence;
+    internal static volatile int ForcedSkillPoints;
     private static readonly int[] DefaultPersistentHeroFormation = { 101, 601, 501 };
     private static readonly Lazy<MethodInfo> AccountStatusManagerGetterMethod = new(() => AccessTools.PropertyGetter(typeof(global::zb), "bfuz") ?? AccessTools.Method(typeof(global::zb), "kqe"));
     private static int _accountStatusLookupLogCount;
@@ -655,12 +658,18 @@ internal sealed class ModActions
         int normalized = NormalizeHeroCatalogAvailability();
         int added = EnsureMissingHeroSaveDataUnlockedOnly(save);
         int unlocked = UnlockExistingHeroSaves(save);
+        int skillPoints = ReapplyForcedSkillPoints(save);
         int formationChanged = RestorePreferredHeroFormation(save, out string formationSummary);
         SlotUnlockResult slots = UnlockInventoryAndStashSaveData(save);
 
-        if (normalized > 0 || added > 0 || unlocked > 0 || formationChanged > 0 || slots.InventoryChanged > 0 || slots.StashChanged > 0)
+        if (normalized > 0 || added > 0 || unlocked > 0 || skillPoints > 0 || formationChanged > 0 || slots.InventoryChanged > 0 || slots.StashChanged > 0)
         {
-            Plugin.FileLog($"Save lifecycle unlock ({source}): heroes nuevos {added}, desbloqueados {unlocked}, catalogo {normalized}, formacion {formationSummary}, inv {slots.InventoryChanged}, alijo {slots.StashChanged}, trade untouched, niveles {BuildHeroLevelSummary(save)}. No forced save.");
+            Plugin.FileLog($"Save lifecycle unlock ({source}): heroes nuevos {added}, desbloqueados {unlocked}, skill points {skillPoints}, catalogo {normalized}, formacion {formationSummary}, inv {slots.InventoryChanged}, alijo {slots.StashChanged}, trade untouched, niveles {BuildHeroLevelSummary(save)}. No forced save.");
+        }
+
+        if (GodModeEnabled)
+        {
+            ApplyGodModeStatusSafe("SaveLifecycle/" + source);
         }
     }
 
@@ -1019,6 +1028,8 @@ internal sealed class ModActions
             try
             {
                 points = Math.Clamp(points, 0, 999);
+                ForceSkillPointPersistence = true;
+                ForcedSkillPoints = points;
                 var save = GetSaveData();
                 var heroes = save.heroSaveDatas;
                 int changed = 0;
@@ -1066,9 +1077,7 @@ internal sealed class ModActions
     public string SetGodMode(bool enabled)
     {
         GodModeEnabled = enabled;
-        string status = Plugin.RuntimeHarmonyPatchesEnabled
-            ? (enabled ? "God mode activado." : "God mode desactivado.")
-            : "God mode no aplicado: runtime patches OFF en esta build estable.";
+        string status = ApplyGodModeStatus(enabled);
         Plugin.FileLog(status);
         return status;
     }
@@ -1095,7 +1104,9 @@ internal sealed class ModActions
                 AttachIl2CppThread();
                 ApplyGameSpeedValue(speed);
                 string combatStatus = ApplyGameSpeedCombatStatus(speed);
+                string godStatus = GodModeEnabled ? " " + ApplyGodModeStatusSafe("SetGameSpeed") : string.Empty;
                 string status = $"Velocidad juego/combate: {speed.ToString("0.0", CultureInfo.InvariantCulture)}x persistente. {combatStatus}";
+                status += godStatus;
                 Plugin.FileLog(status);
                 return status;
             }
@@ -3199,7 +3210,7 @@ internal sealed class ModActions
             {
                 RefreshRuntimeHeroFromSaveData(cache, hero);
             });
-            changed += TryRuntimeCall("vd refresh", () => TryInvokeInstanceMethod(cache, "jra"));
+            changed += TryRuntimeCall("vd refresh", () => InvokeFirstInstanceMethod(cache, "jqu", "jqe", "jqv", "jqw", "jrf", "fkl", "frf", "iyr", "gye", "fkg", "dnr", "lgz"));
         }
         catch (Exception ex)
         {
@@ -3302,6 +3313,123 @@ internal sealed class ModActions
         }
 
         return changed;
+    }
+
+    internal static int ReapplyForcedSkillPoints(global::TaskbarHero.PlayerSaveData save)
+    {
+        if (!ForceSkillPointPersistence)
+        {
+            return 0;
+        }
+
+        if (IsSuspiciousFreshSave(save))
+        {
+            Plugin.FileLog("Skill point persistence blocked: suspicious fresh save " + DescribeSafetyShape(save));
+            return 0;
+        }
+
+        int changed = 0;
+        int points = Math.Clamp(ForcedSkillPoints, 0, 999);
+        var heroes = save?.heroSaveDatas;
+        if (heroes == null)
+        {
+            return changed;
+        }
+
+        for (int i = 0; i < heroes.Count; i++)
+        {
+            var hero = heroes[i];
+            if (hero == null)
+            {
+                continue;
+            }
+
+            if (hero.AbilityPoint != points)
+            {
+                hero.AbilityPoint = points;
+                changed++;
+            }
+        }
+
+        if (changed > 0)
+        {
+            Plugin.FileLog($"Skill point persistence reapplied: {points}. {BuildHeroAbilitySummary(save)}");
+        }
+
+        return changed;
+    }
+
+    private static string ApplyGodModeStatus(bool enabled)
+    {
+        try
+        {
+            AttachIl2CppThread();
+            var accountStatusManager = GetRuntimeAccountStatusManager(out string lookupDetail);
+            if (!IsValid(accountStatusManager))
+            {
+                return (enabled ? "God mode pendiente: " : "God mode OFF pendiente: ") + lookupDetail;
+            }
+
+            string summary = ApplyGodModeStatusContributions(accountStatusManager, enabled);
+            return enabled
+                ? $"God mode activado por stats cuenta. {summary}"
+                : $"God mode desactivado por stats cuenta. {summary}";
+        }
+        catch (Exception ex)
+        {
+            return Fail("God mode status", ex);
+        }
+    }
+
+    private static string ApplyGodModeStatusSafe(string source)
+    {
+        try
+        {
+            return ApplyGodModeStatus(GodModeEnabled) + $" Reaplicado desde {source}.";
+        }
+        catch (Exception ex)
+        {
+            string status = $"God mode reapply fallo ({source}): {ex.Message}";
+            Plugin.FileLog(status);
+            return status;
+        }
+    }
+
+    private static string ApplyGodModeStatusContributions(global::zb accountStatusManager, bool enabled)
+    {
+        int armor = enabled ? 100_000_000 : 0;
+        int armorPercent = enabled ? 100_000 : 0;
+        int attackDamage = enabled ? 10_000_000 : 0;
+        int attackDamagePercent = enabled ? 10_000 : 0;
+        int attackSpeed = enabled ? 2_000 : 0;
+
+        var bonuses = new (global::TaskbarHero.StatusSystem.EAccountStatus Status, int Value)[]
+        {
+            (global::TaskbarHero.StatusSystem.EAccountStatus.AllHeroArmor, armor),
+            (global::TaskbarHero.StatusSystem.EAccountStatus.AllHeroArmorPercent, armorPercent),
+            (global::TaskbarHero.StatusSystem.EAccountStatus.AllHeroAttackDamage, attackDamage),
+            (global::TaskbarHero.StatusSystem.EAccountStatus.AllHeroAttackDamagePercent, attackDamagePercent),
+            (global::TaskbarHero.StatusSystem.EAccountStatus.AllHeroAttackSpeed, attackSpeed)
+        };
+
+        var summary = new StringBuilder();
+        for (int i = 0; i < bonuses.Length; i++)
+        {
+            SetAccountStatusContribution(accountStatusManager, bonuses[i].Status, bonuses[i].Value, GodModeStatusBoostSource);
+            int after = ReadAccountStatus(accountStatusManager, bonuses[i].Status);
+            if (summary.Length > 0)
+            {
+                summary.Append("; ");
+            }
+
+            summary.Append(bonuses[i].Status)
+                .Append(" +")
+                .Append(bonuses[i].Value)
+                .Append(" total ")
+                .Append(after);
+        }
+
+        return summary.ToString();
     }
 
     private static int GetTargetHeroLevel()
@@ -3407,7 +3535,7 @@ internal sealed class ModActions
 
     private static int SetRuntimeHeroAbilityPointsExact(global::vd cache, int desired)
     {
-        return TryRuntimeCall("vd save ability points refresh", () => TryInvokeInstanceMethod(cache, "jra"));
+        return TryRuntimeCall("vd save ability points refresh", () => InvokeFirstInstanceMethod(cache, "jqu", "jqe", "jqv", "jqw", "jrf", "fkl", "frf", "iyr", "gye", "fkg", "dnr", "lgz"));
     }
 
     private static int SetRuntimeHeroAbilityPointsExact(global::TaskbarHero.EasySaveData.HeroSaveData hero)
@@ -3440,7 +3568,7 @@ internal sealed class ModActions
 
     private static int EnsureRuntimeHeroAbilityPoints(global::vd cache, int minimum)
     {
-        return minimum > 0 ? TryRuntimeCall("vd ability points refresh", () => TryInvokeInstanceMethod(cache, "jra")) : 0;
+        return minimum > 0 ? TryRuntimeCall("vd ability points refresh", () => InvokeFirstInstanceMethod(cache, "jqu", "jqe", "jqv", "jqw", "jrf", "fkl", "frf", "iyr", "gye", "fkg", "dnr", "lgz")) : 0;
     }
 
     private static int ReadRuntimeInt(string label, Func<int> getter, int fallback)
@@ -3513,6 +3641,19 @@ internal sealed class ModActions
         return false;
     }
 
+    private static int InvokeFirstInstanceMethod(object target, params string[] methodNames)
+    {
+        for (int i = 0; i < methodNames.Length; i++)
+        {
+            if (TryInvokeInstanceMethod(target, methodNames[i]))
+            {
+                return 1;
+            }
+        }
+
+        throw new MissingMethodException(target?.GetType().FullName ?? "null", string.Join("|", methodNames));
+    }
+
     private static T TryInvokeInstanceObject<T>(object target, string methodName, params object[] args)
         where T : class
     {
@@ -3536,6 +3677,48 @@ internal sealed class ModActions
         }
 
         throw new MissingMethodException(type.FullName, methodName);
+    }
+
+    private static object TryInvokeStaticMethodOrNull(Type type, string methodName, params object[] args)
+    {
+        try
+        {
+            return TryInvokeStaticMethod(type, methodName, args);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static object ReadStaticMember(Type type, string memberName)
+    {
+        if (type == null || string.IsNullOrWhiteSpace(memberName))
+        {
+            return null;
+        }
+
+        const BindingFlags flags = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+        try
+        {
+            var property = type.GetProperty(memberName, flags);
+            if (property != null)
+            {
+                return property.GetValue(null);
+            }
+
+            var field = type.GetField(memberName, flags);
+            if (field != null)
+            {
+                return field.GetValue(null);
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.FileLog($"{type.FullName}.{memberName} static read failed: {ex.Message}");
+        }
+
+        return null;
     }
 
     private static Type GameType(string typeName)
@@ -3726,6 +3909,41 @@ internal sealed class ModActions
         }
     }
 
+    private static long ReadRuntimeLongFlexible(object target, long fallback, params string[] names)
+    {
+        for (int i = 0; i < names.Length; i++)
+        {
+            string name = names[i];
+            try
+            {
+                object value = ReadObjectMember(target, name);
+                if (value != null)
+                {
+                    return Convert.ToInt64(value, CultureInfo.InvariantCulture);
+                }
+            }
+            catch
+            {
+                // Keep trying method/property names from adjacent game builds.
+            }
+
+            try
+            {
+                object value = InvokeInstanceMethod(target, name);
+                if (value != null)
+                {
+                    return Convert.ToInt64(value, CultureInfo.InvariantCulture);
+                }
+            }
+            catch
+            {
+                // Keep trying method/property names from adjacent game builds.
+            }
+        }
+
+        return fallback;
+    }
+
     private static Il2CppObjectBase CreateRuntimeItemCache(
         global::TaskbarHero.Data.ItemInfoData itemInfo,
         global::TaskbarHero.EasySaveData.ItemSaveData itemSave)
@@ -3777,6 +3995,30 @@ internal sealed class ModActions
         global::vd hero = null;
 
         var heroRuntimeType = GameType("tz");
+        try { hero = TryInvokeStaticMethod(heroRuntimeType, "ith", heroKey) as global::vd; } catch { }
+        if (IsValid(hero)) { return hero; }
+
+        try { hero = TryInvokeStaticMethod(heroRuntimeType, "itz", heroKey) as global::vd; } catch { }
+        if (IsValid(hero)) { return hero; }
+
+        try { hero = TryInvokeStaticMethod(heroRuntimeType, "ixf", heroKey) as global::vd; } catch { }
+        if (IsValid(hero)) { return hero; }
+
+        try { hero = TryInvokeStaticMethod(heroRuntimeType, "nch", heroKey) as global::vd; } catch { }
+        if (IsValid(hero)) { return hero; }
+
+        try { hero = TryInvokeStaticMethod(heroRuntimeType, "jvl", heroKey) as global::vd; } catch { }
+        if (IsValid(hero)) { return hero; }
+
+        try { hero = TryInvokeStaticMethod(heroRuntimeType, "olm", heroKey) as global::vd; } catch { }
+        if (IsValid(hero)) { return hero; }
+
+        try { hero = TryInvokeStaticMethod(heroRuntimeType, "us", heroKey) as global::vd; } catch { }
+        if (IsValid(hero)) { return hero; }
+
+        try { hero = TryInvokeStaticMethod(heroRuntimeType, "mwa", heroKey) as global::vd; } catch { }
+        if (IsValid(hero)) { return hero; }
+
         try { hero = TryInvokeStaticMethod(heroRuntimeType, "dho", heroKey) as global::vd; } catch { }
         if (IsValid(hero)) { return hero; }
 
@@ -3788,7 +4030,26 @@ internal sealed class ModActions
 
         try
         {
-            var heroes = TryInvokeStaticMethod(heroRuntimeType, "itb");
+            var dictionary = ReadStaticMember(heroRuntimeType, "bevc");
+            if (RuntimeDictionaryContainsKey(dictionary, heroKey))
+            {
+                hero = RuntimeDictionaryGetValue(dictionary, heroKey) as global::vd;
+                if (IsValid(hero))
+                {
+                    return hero;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.FileLog($"FindRuntimeHero dictionary failed key={heroKey}: {ex.Message}");
+        }
+
+        try
+        {
+            var heroes = ReadStaticMember(heroRuntimeType, "bsmr")
+                         ?? TryInvokeStaticMethodOrNull(heroRuntimeType, "itc")
+                         ?? TryInvokeStaticMethodOrNull(heroRuntimeType, "itb");
             if (heroes is System.Collections.IEnumerable enumerable)
             {
                 foreach (object entry in enumerable)
@@ -3822,7 +4083,7 @@ internal sealed class ModActions
             return;
         }
 
-        string[] candidates = { "nlb", "edw", "nxr", "jqc" };
+        string[] candidates = { "jqd", "deq", "nlb", "edw", "nxr", "jqc" };
         bool invoked = false;
         for (int i = 0; i < candidates.Length; i++)
         {
@@ -4428,21 +4689,29 @@ internal sealed class ModActions
             return false;
         }
 
-        oldValue = ReadRuntimeLong(currency, "irz", 0);
+        oldValue = ReadRuntimeCurrencyQuantity(currency, 0);
         long delta = target - oldValue;
         if (delta != 0)
         {
             try
             {
-                TryInvokeInstanceMethod(currency, "isc", delta, target, global::TaskbarHero.EGoldCurrencySource.OfflineReward);
+                object result = InvokeInstanceMethod(currency, "isd", delta, global::TaskbarHero.EGoldCurrencySource.OfflineReward);
+                if (result != null)
+                {
+                    newValue = Convert.ToInt64(result, CultureInfo.InvariantCulture);
+                }
             }
             catch (Exception ex)
             {
-                Plugin.FileLog($"Runtime currency isc failed key={key}: {ex.Message}");
+                Plugin.FileLog($"Runtime currency isd failed key={key}: {ex.Message}");
+                TryRefreshRuntimeCurrencyFromSave(currency, new global::TaskbarHero.EasySaveData.CurrencySaveData(key, target), key);
             }
         }
 
-        newValue = ReadRuntimeLong(currency, "irz", target);
+        if (newValue == 0)
+        {
+            newValue = ReadRuntimeCurrencyQuantity(currency, target);
+        }
 
         return true;
     }
@@ -4458,23 +4727,54 @@ internal sealed class ModActions
             return false;
         }
 
-        oldValue = ReadRuntimeLong(currency, "irz", 0);
+        oldValue = ReadRuntimeCurrencyQuantity(currency, 0);
         long target = AddSaturating(oldValue, amount);
         if (amount != 0)
         {
             try
             {
-                TryInvokeInstanceMethod(currency, "isc", amount, target, global::TaskbarHero.EGoldCurrencySource.OfflineReward);
+                object result = InvokeInstanceMethod(currency, "isd", amount, global::TaskbarHero.EGoldCurrencySource.OfflineReward);
+                if (result != null)
+                {
+                    newValue = Convert.ToInt64(result, CultureInfo.InvariantCulture);
+                }
             }
             catch (Exception ex)
             {
                 Plugin.FileLog($"Runtime currency add failed key={key}: {ex.Message}");
+                TryRefreshRuntimeCurrencyFromSave(currency, new global::TaskbarHero.EasySaveData.CurrencySaveData(key, target), key);
             }
         }
 
-        newValue = ReadRuntimeLong(currency, "irz", target);
+        if (newValue == 0)
+        {
+            newValue = ReadRuntimeCurrencyQuantity(currency, target);
+        }
 
         return true;
+    }
+
+    private static long ReadRuntimeCurrencyQuantity(object currency, long fallback)
+    {
+        return ReadRuntimeLongFlexible(currency, fallback, "bsmp", "isa", "irz");
+    }
+
+    private static void TryRefreshRuntimeCurrencyFromSave(object currency, global::TaskbarHero.EasySaveData.CurrencySaveData save, int key)
+    {
+        foreach (string methodName in new[] { "isc", "fnj", "ocr", "elz", "jek" })
+        {
+            try
+            {
+                InvokeInstanceMethod(currency, methodName, save);
+                return;
+            }
+            catch
+            {
+                // Obfuscated method names differ between builds; try the next candidate.
+            }
+        }
+
+        Plugin.FileLog($"Runtime currency save refresh failed key={key}: no compatible tq method.");
     }
 
     private static long AddSaturating(long value, long amount)
@@ -4498,6 +4798,15 @@ internal sealed class ModActions
         Il2CppObjectBase currency = null;
 
         var currencyRuntimeType = GameType("tp");
+        try { currency = TryInvokeStaticMethod(currencyRuntimeType, "irw", key) as Il2CppObjectBase; } catch { }
+        if (IsValid(currency)) { return currency; }
+
+        try { currency = TryInvokeStaticMethod(currencyRuntimeType, "ibz", key) as Il2CppObjectBase; } catch { }
+        if (IsValid(currency)) { return currency; }
+
+        try { currency = TryInvokeStaticMethod(currencyRuntimeType, "jxs", key) as Il2CppObjectBase; } catch { }
+        if (IsValid(currency)) { return currency; }
+
         try { currency = TryInvokeStaticMethod(currencyRuntimeType, "iuq", key) as Il2CppObjectBase; } catch { }
         if (IsValid(currency)) { return currency; }
 
