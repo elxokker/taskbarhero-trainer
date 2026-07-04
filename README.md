@@ -3,15 +3,15 @@
 Trainer externo para **TaskbarHero** con bridge BepInEx IL2CPP. No usa hotkeys:
 todo se activa desde la ventana del trainer.
 
-![TaskbarHero Trainer 1.8.5](docs/taskbarhero-trainer-v1.7.png)
+![TaskbarHero Trainer 1.8.6](docs/taskbarhero-trainer-v1.7.png)
 
 ## Version actual
 
-**TaskbarHero Trainer 1.8.5**
+**TaskbarHero Trainer 1.8.6**
 
 Descarga recomendada:
 
-- [TaskbarHeroTrainer-v1.8.5.zip](https://github.com/elxokker/taskbarhero-trainer/releases/latest)
+- [TaskbarHeroTrainer-v1.8.6.zip](https://github.com/elxokker/taskbarhero-trainer/releases/latest)
 
 ## Que incluye
 

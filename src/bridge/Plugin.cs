@@ -23,7 +23,7 @@ public sealed class Plugin : BasePlugin
 {
     public const string PluginGuid = "xoker.taskbarhero.modmenu";
     public const string PluginName = "TaskbarHero Trainer Bridge";
-    public const string PluginVersion = "1.8.5";
+    public const string PluginVersion = "1.8.6";
     public const string PipeName = "TaskbarHeroTrainerPipe";
     private static readonly bool EnableRuntimeHarmonyPatches = false;
     internal static readonly bool EnableForcedSaveRequests = false;
@@ -302,7 +302,7 @@ internal sealed class ModActions
     internal static volatile bool IsGameQuitting;
 
     private const long DefaultCurrencyAmount = 999_999_999;
-    private const int DefaultHeroLevel = 50;
+    private const int DefaultHeroLevel = 101;
     private const int DefaultHeroAbilityPoints = 0;
     private const int DefaultHeroAllocatedAbilityPoints = 999;
     private const int MaxItemClonesPerClick = 20;
@@ -690,14 +690,15 @@ internal sealed class ModActions
                         continue;
                     }
 
-                    hero.HeroLevel = targetHeroLevel;
+                    int heroTargetLevel = Math.Max(hero.HeroLevel, targetHeroLevel);
+                    hero.HeroLevel = heroTargetLevel;
                     hero.IsUnLock = true;
                     hero.HeroExp = 0f;
                     hero.AbilityPoint = DefaultHeroAbilityPoints;
                     abilityTreeChanged += NormalizeHeroAbilityTree(hero);
                     changed++;
                     runtimeChanged += RefreshRuntimeHero(hero);
-                    Plugin.FileLog($"Hero key={hero.heroKey} level={targetHeroLevel} unlocked=true freeAbilityPoints={DefaultHeroAbilityPoints} allocated={hero.AllocatedHeroAbilityPoint} groups={CountArray(hero.unlockedAttributeGroupKeys)}");
+                    Plugin.FileLog($"Hero key={hero.heroKey} level={heroTargetLevel} unlocked=true freeAbilityPoints={DefaultHeroAbilityPoints} allocated={hero.AllocatedHeroAbilityPoint} groups={CountArray(hero.unlockedAttributeGroupKeys)}");
                 }
 
                 runtimeChanged += RefreshHeroManagerRuntime();
@@ -758,13 +759,14 @@ internal sealed class ModActions
         int normalized = NormalizeHeroCatalogAvailability();
         int added = EnsureMissingHeroSaveDataUnlockedOnly(save);
         int unlocked = UnlockExistingHeroSaves(save);
+        int leveled = RaiseExistingHeroLevels(save, GetTargetHeroLevel());
         int skillPoints = ReapplyForcedSkillPoints(save);
         int formationChanged = RestorePreferredHeroFormation(save, out string formationSummary);
         SlotUnlockResult slots = UnlockInventoryAndStashSaveData(save);
 
-        if (normalized > 0 || added > 0 || unlocked > 0 || skillPoints > 0 || formationChanged > 0 || slots.InventoryChanged > 0 || slots.StashChanged > 0)
+        if (normalized > 0 || added > 0 || unlocked > 0 || leveled > 0 || skillPoints > 0 || formationChanged > 0 || slots.InventoryChanged > 0 || slots.StashChanged > 0)
         {
-            Plugin.FileLog($"Save lifecycle unlock ({source}): heroes nuevos {added}, desbloqueados {unlocked}, skill points {skillPoints}, catalogo {normalized}, formacion {formationSummary}, inv {slots.InventoryChanged}, alijo {slots.StashChanged}, trade untouched, niveles {BuildHeroLevelSummary(save)}. No forced save.");
+            Plugin.FileLog($"Save lifecycle unlock ({source}): heroes nuevos {added}, desbloqueados {unlocked}, niveles subidos {leveled}, skill points {skillPoints}, catalogo {normalized}, formacion {formationSummary}, inv {slots.InventoryChanged}, alijo {slots.StashChanged}, trade untouched, niveles {BuildHeroLevelSummary(save)}. No forced save.");
         }
 
         if (GodModeEnabled)
@@ -789,8 +791,9 @@ internal sealed class ModActions
         int normalized = NormalizeHeroCatalogAvailability();
         int added = EnsureMissingHeroSaveDataUnlockedOnly(save);
         int unlocked = UnlockExistingHeroSaves(save);
+        int leveled = RaiseExistingHeroLevels(save, GetTargetHeroLevel());
         int formationChanged = RestorePreferredHeroFormation(save, out string formationSummary);
-        bool saveChanged = added > 0 || unlocked > 0 || formationChanged > 0;
+        bool saveChanged = added > 0 || unlocked > 0 || leveled > 0 || formationChanged > 0;
 
         int runtimeChanged = 0;
         if (normalized > 0 || saveChanged)
@@ -813,7 +816,7 @@ internal sealed class ModActions
         string saveStatus = saveAfterChange && saveChanged
             ? RequestSave()
             : "Sin cambios persistentes; no se guardo.";
-        return $"Heroes persistentes ({source}): nuevos {added}, desbloqueados {unlocked}, formacion {formationSummary}, runtime {runtimeChanged}, catalogo normalizado {normalized}. No se tocaron items/stash/progreso. {DescribeHeroCatalog()} Niveles save: {BuildHeroLevelSummary(save)}. Skills: {BuildHeroAbilitySummary(save)}. {saveStatus}";
+        return $"Heroes persistentes ({source}): nuevos {added}, desbloqueados {unlocked}, niveles subidos {leveled}, formacion {formationSummary}, runtime {runtimeChanged}, catalogo normalizado {normalized}. No se tocaron items/stash/progreso. {DescribeHeroCatalog()} Niveles save: {BuildHeroLevelSummary(save)}. Skills: {BuildHeroAbilitySummary(save)}. {saveStatus}";
     }
 
     private static bool IsSuspiciousFreshSave(global::TaskbarHero.PlayerSaveData save)
@@ -867,6 +870,32 @@ internal sealed class ModActions
         }
 
         return unlocked;
+    }
+
+    private static int RaiseExistingHeroLevels(global::TaskbarHero.PlayerSaveData save, int minimumLevel)
+    {
+        int changed = 0;
+        int target = Math.Max(DefaultHeroLevel, minimumLevel);
+        var heroes = save?.heroSaveDatas;
+        if (heroes == null)
+        {
+            return changed;
+        }
+
+        for (int i = 0; i < heroes.Count; i++)
+        {
+            var hero = heroes[i];
+            if (hero == null || hero.HeroLevel >= target)
+            {
+                continue;
+            }
+
+            hero.HeroLevel = target;
+            hero.HeroExp = 0f;
+            changed++;
+        }
+
+        return changed;
     }
 
     private static int RestorePreferredHeroFormation(global::TaskbarHero.PlayerSaveData save, out string summary)
@@ -3349,7 +3378,7 @@ internal sealed class ModActions
                 continue;
             }
 
-            if (hero.HeroLevel != targetHeroLevel)
+            if (hero.HeroLevel < targetHeroLevel)
             {
                 hero.HeroLevel = targetHeroLevel;
                 changed++;
@@ -3754,6 +3783,72 @@ internal sealed class ModActions
         return InvokeInstanceMethod(target, methodName, args) as T;
     }
 
+    private static T TryInvokeInstanceObjectByReturn<T>(object target, object[] args, params string[] preferredNames)
+        where T : class
+    {
+        if (target == null)
+        {
+            return null;
+        }
+
+        if (preferredNames != null)
+        {
+            for (int i = 0; i < preferredNames.Length; i++)
+            {
+                string name = preferredNames[i];
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    var value = TryInvokeInstanceObject<T>(target, name, args);
+                    if (value != null)
+                    {
+                        return value;
+                    }
+                }
+                catch
+                {
+                    // Keep trying lookup aliases from adjacent game builds.
+                }
+            }
+        }
+
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        Type expectedType = typeof(T);
+        Type type = target.GetType();
+        while (type != null)
+        {
+            foreach (var method in type.GetMethods(flags))
+            {
+                if (!expectedType.IsAssignableFrom(method.ReturnType) ||
+                    !TryCoerceArguments(method.GetParameters(), args, out var coerced))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    var value = method.Invoke(target, coerced) as T;
+                    if (value != null)
+                    {
+                        return value;
+                    }
+                }
+                catch
+                {
+                    // Some IL2CPP wrapper methods throw for missing rows. Try the next matching signature.
+                }
+            }
+
+            type = type.BaseType;
+        }
+
+        return null;
+    }
+
     private static object TryInvokeStaticMethod(Type type, string methodName, params object[] args)
     {
         if (type == null)
@@ -3999,6 +4094,80 @@ internal sealed class ModActions
         catch (Exception ex)
         {
             Plugin.FileLog($"{target?.GetType().Name ?? "null"}.{methodName} read failed: {ex.Message}");
+            return fallback;
+        }
+    }
+
+    private static object ReadObjectMemberFlexible(object target, params string[] memberNames)
+    {
+        if (target == null || memberNames == null)
+        {
+            return null;
+        }
+
+        for (int i = 0; i < memberNames.Length; i++)
+        {
+            string name = memberNames[i];
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                continue;
+            }
+
+            try
+            {
+                object value = ReadObjectMember(target, name);
+                if (value != null)
+                {
+                    return value;
+                }
+            }
+            catch
+            {
+                // Continue through renamed obfuscated members.
+            }
+        }
+
+        return null;
+    }
+
+    private static int ReadObjectIntFlexible(object target, int fallback, params string[] memberNames)
+    {
+        try
+        {
+            object value = ReadObjectMemberFlexible(target, memberNames);
+            return value == null ? fallback : Convert.ToInt32(value, CultureInfo.InvariantCulture);
+        }
+        catch
+        {
+            return fallback;
+        }
+    }
+
+    private static TEnum ReadObjectEnumFlexible<TEnum>(object target, TEnum fallback, params string[] memberNames)
+        where TEnum : struct, Enum
+    {
+        try
+        {
+            object value = ReadObjectMemberFlexible(target, memberNames);
+            if (value == null)
+            {
+                return fallback;
+            }
+
+            if (value is TEnum typed)
+            {
+                return typed;
+            }
+
+            if (value is string text && Enum.TryParse(text, ignoreCase: true, out TEnum parsed))
+            {
+                return parsed;
+            }
+
+            return (TEnum)Enum.ToObject(typeof(TEnum), Convert.ToInt32(value, CultureInfo.InvariantCulture));
+        }
+        catch
+        {
             return fallback;
         }
     }
@@ -6556,8 +6725,8 @@ internal sealed class ModActions
         int statModKey = 0;
         if (TryFindBestStatMod(data, statType, out var statMod, out statModKey, out tier))
         {
-            resolvedStatType = statMod.bgrk;
-            modType = statMod.bgrl;
+            resolvedStatType = GetStatModStatType(statMod, statType);
+            modType = GetStatModModType(statMod, modType);
         }
 
         int value = GetBestEnchantValue(statType);
@@ -6594,8 +6763,8 @@ internal sealed class ModActions
         int statModKey = 0;
         if (TryFindBestStatMod(data, statType, out var statMod, out statModKey, out tier))
         {
-            statType = statMod.bgrk;
-            modType = statMod.bgrl;
+            statType = GetStatModStatType(statMod, statType);
+            modType = GetStatModModType(statMod, modType);
         }
 
         int value = GetBestEnchantValue(statType);
@@ -6781,12 +6950,14 @@ internal sealed class ModActions
             }
 
             var material = GetMaterialInfo(data, item.ItemKey);
-            if (!IsValid(material) || material.bgpv != materialType)
+            if (!IsValid(material) || GetMaterialType(material) != materialType)
             {
                 continue;
             }
 
-            var statMod = GetStatModInfo(data, material.bgpu, material.bgpw);
+            int materialStatModKey = GetMaterialStatModKey(material);
+            int materialTier = GetMaterialTier(material);
+            var statMod = GetStatModInfo(data, materialStatModKey, materialTier);
             bool hasStatMod = IsValid(statMod);
 
             int grade = GradeRank(item.GRADE.ToString());
@@ -6806,12 +6977,12 @@ internal sealed class ModActions
             {
                 ItemKey = item.ItemKey,
                 GradeRank = grade,
-                MaterialTier = material.bgpw,
-                StatModKey = material.bgpu,
+                MaterialTier = materialTier,
+                StatModKey = materialStatModKey,
                 HasStatMod = hasStatMod,
-                StatType = hasStatMod ? statMod.bgrk : global::TaskbarHero.StatType.NONE,
-                ModType = hasStatMod ? statMod.bgrl : global::TaskbarHero.MODTYPE.ADDITIVE,
-                Value = hasStatMod ? statMod.bgrm : 0
+                StatType = hasStatMod ? GetStatModStatType(statMod, global::TaskbarHero.StatType.NONE) : global::TaskbarHero.StatType.NONE,
+                ModType = hasStatMod ? GetStatModModType(statMod, global::TaskbarHero.MODTYPE.ADDITIVE) : global::TaskbarHero.MODTYPE.ADDITIVE,
+                Value = hasStatMod ? GetStatModValue(statMod, 0) : 0
             });
         }
 
@@ -6894,17 +7065,10 @@ internal sealed class ModActions
             return null;
         }
 
-        try
-        {
-            return data.mgk(materialKey);
-        }
-        catch
-        {
-            // try next generated lookup name
-        }
-
-        try { return TryInvokeInstanceObject<global::TaskbarHero.Data.MaterialInfoData>(data, "mgk", materialKey); } catch { }
-        return null;
+        return TryInvokeInstanceObjectByReturn<global::TaskbarHero.Data.MaterialInfoData>(
+            data,
+            new object[] { materialKey },
+            "mgp", "mgk");
     }
 
     private static global::TaskbarHero.Data.StatModInfoData GetStatModInfo(global::bas data, int statModKey, int tier)
@@ -6914,21 +7078,10 @@ internal sealed class ModActions
             return null;
         }
 
-        try
-        {
-            return data.mgh(statModKey, tier);
-        }
-        catch
-        {
-            // try next generated lookup name
-        }
-
-        foreach (string name in new[] { "vs", "mxs", "fpt", "ded" })
-        {
-            try { return TryInvokeInstanceObject<global::TaskbarHero.Data.StatModInfoData>(data, name, statModKey, tier); } catch { }
-        }
-
-        return null;
+        return TryInvokeInstanceObjectByReturn<global::TaskbarHero.Data.StatModInfoData>(
+            data,
+            new object[] { statModKey, tier },
+            "mgm", "gpd", "eza", "mgh", "vs", "mxs", "fpt", "ded");
     }
 
     private static global::TaskbarHero.Data.LevelInfoData GetLevelInfo(global::bas data, int level)
@@ -6938,12 +7091,10 @@ internal sealed class ModActions
             return null;
         }
 
-        try { return data.jse(level); } catch { }
-        try { return data.mwh(level); } catch { }
-        try { return data.dqw(level); } catch { }
-        try { return data.mia(level); } catch { }
-        try { return data.hmi(level); } catch { }
-        return null;
+        return TryInvokeInstanceObjectByReturn<global::TaskbarHero.Data.LevelInfoData>(
+            data,
+            new object[] { level },
+            "mif", "kvd", "ody", "kaz", "jse", "mwh", "dqw", "hmi");
     }
 
     private static global::TaskbarHero.Data.PetInfoData GetPetInfo(global::bas data, int petKey)
@@ -6953,13 +7104,10 @@ internal sealed class ModActions
             return null;
         }
 
-        try { return data.mfg(petKey); } catch { }
-        foreach (string name in new[] { "mfg", "beo" })
-        {
-            try { return TryInvokeInstanceObject<global::TaskbarHero.Data.PetInfoData>(data, name, petKey); } catch { }
-        }
-
-        return null;
+        return TryInvokeInstanceObjectByReturn<global::TaskbarHero.Data.PetInfoData>(
+            data,
+            new object[] { petKey },
+            "mfl", "efh", "gzv", "mfg", "beo");
     }
 
     private static global::TaskbarHero.Data.CraftingRecipeInfoData GetCraftingRecipeInfo(
@@ -6972,13 +7120,49 @@ internal sealed class ModActions
             return null;
         }
 
-        try { return data.mfk(tier, craftingType); } catch { }
-        foreach (string name in new[] { "mfk", "geg", "egd", "dct", "esj" })
-        {
-            try { return TryInvokeInstanceObject<global::TaskbarHero.Data.CraftingRecipeInfoData>(data, name, tier, craftingType); } catch { }
-        }
+        return TryInvokeInstanceObjectByReturn<global::TaskbarHero.Data.CraftingRecipeInfoData>(
+            data,
+            new object[] { tier, craftingType },
+            "mfp", "mfk", "geg", "egd", "dct", "esj");
+    }
 
-        return null;
+    private static global::TaskbarHero.Data.EMaterialType GetMaterialType(global::TaskbarHero.Data.MaterialInfoData material)
+    {
+        return ReadObjectEnumFlexible(material, global::TaskbarHero.Data.EMaterialType.NONE, "bgqf", "bgpv");
+    }
+
+    private static int GetMaterialStatModKey(global::TaskbarHero.Data.MaterialInfoData material)
+    {
+        return ReadObjectIntFlexible(material, 0, "bgqe", "bgpu");
+    }
+
+    private static int GetMaterialTier(global::TaskbarHero.Data.MaterialInfoData material)
+    {
+        return ReadObjectIntFlexible(material, 10, "bgqg", "bgpw");
+    }
+
+    private static int GetMaterialVisualValue(global::TaskbarHero.Data.MaterialInfoData material)
+    {
+        return ReadObjectIntFlexible(material, 0, "bgpt", "bgqg", "bgpw");
+    }
+
+    private static global::TaskbarHero.StatType GetStatModStatType(
+        global::TaskbarHero.Data.StatModInfoData statMod,
+        global::TaskbarHero.StatType fallback)
+    {
+        return ReadObjectEnumFlexible(statMod, fallback, "bgru", "bgrk", "bgrj");
+    }
+
+    private static global::TaskbarHero.MODTYPE GetStatModModType(
+        global::TaskbarHero.Data.StatModInfoData statMod,
+        global::TaskbarHero.MODTYPE fallback)
+    {
+        return ReadObjectEnumFlexible(statMod, fallback, "bgrv", "bgrl", "bgrk");
+    }
+
+    private static int GetStatModValue(global::TaskbarHero.Data.StatModInfoData statMod, int fallback)
+    {
+        return ReadObjectIntFlexible(statMod, fallback, "bgrw", "bgrm", "bgrl");
     }
 
     private static global::TaskbarHero.Data.EMaterialType ToMaterialType(global::TaskbarHero.Data.ERecipeType recipeType)
@@ -7517,7 +7701,9 @@ internal sealed class ModActions
     {
         var material = enchant.MaterialKey > 0 ? GetMaterialInfo(data, enchant.MaterialKey) : null;
         bool materialValid = IsValid(material);
-        var materialStatMod = materialValid ? GetStatModInfo(data, material.bgpu, material.bgpw) : null;
+        int materialStatModKey = materialValid ? GetMaterialStatModKey(material) : 0;
+        int materialTier = materialValid ? GetMaterialTier(material) : 0;
+        var materialStatMod = materialValid ? GetStatModInfo(data, materialStatModKey, materialTier) : null;
         bool materialStatModValid = IsValid(materialStatMod);
         var enchantStatMod = enchant.StatModKey > 0 ? GetStatModInfo(data, enchant.StatModKey, enchant.Tier) : null;
         bool enchantStatModValid = IsValid(enchantStatMod);
@@ -7544,18 +7730,18 @@ internal sealed class ModActions
             RecipeName(enchant.RecipeType),
             enchant.MaterialKey,
             materialValid,
-            materialValid ? material.bgpu : global::TaskbarHero.Data.EMaterialType.NONE,
-            materialValid ? material.bgpv : 0,
-            materialValid ? material.bgpt : 0,
-            materialStatModValid ? materialStatMod.bgrj : global::TaskbarHero.StatType.NONE,
-            materialStatModValid ? materialStatMod.bgrk : global::TaskbarHero.MODTYPE.ADDITIVE,
-            materialStatModValid ? materialStatMod.bgrl : 0,
+            materialValid ? GetMaterialType(material) : global::TaskbarHero.Data.EMaterialType.NONE,
+            materialTier,
+            materialValid ? GetMaterialVisualValue(material) : 0,
+            materialStatModValid ? GetStatModStatType(materialStatMod, global::TaskbarHero.StatType.NONE) : global::TaskbarHero.StatType.NONE,
+            materialStatModValid ? GetStatModModType(materialStatMod, global::TaskbarHero.MODTYPE.ADDITIVE) : global::TaskbarHero.MODTYPE.ADDITIVE,
+            materialStatModValid ? GetStatModValue(materialStatMod, 0) : 0,
             enchant.StatModKey,
             enchant.Tier,
             enchantStatModValid,
-            enchantStatModValid ? enchantStatMod.bgrj : global::TaskbarHero.StatType.NONE,
-            enchantStatModValid ? enchantStatMod.bgrk : global::TaskbarHero.MODTYPE.ADDITIVE,
-            enchantStatModValid ? enchantStatMod.bgrl : 0,
+            enchantStatModValid ? GetStatModStatType(enchantStatMod, global::TaskbarHero.StatType.NONE) : global::TaskbarHero.StatType.NONE,
+            enchantStatModValid ? GetStatModModType(enchantStatMod, global::TaskbarHero.MODTYPE.ADDITIVE) : global::TaskbarHero.MODTYPE.ADDITIVE,
+            enchantStatModValid ? GetStatModValue(enchantStatMod, 0) : 0,
             StatTypeName(enchant.StatType),
             ModTypeName(enchant.ModType),
             enchant.Value);
@@ -8107,9 +8293,9 @@ internal sealed class ModActions
             if (IsValid(materialInfo))
             {
                 builder.Append(":mat")
-                    .Append(materialInfo.bgpu)
+                    .Append(GetMaterialType(materialInfo))
                     .Append(":tier")
-                    .Append(materialInfo.bgpv);
+                    .Append(GetMaterialTier(materialInfo));
             }
         }
 
@@ -8300,45 +8486,27 @@ internal sealed class ModActions
 
     private static global::bau GetSaveManager()
     {
-        AttachIl2CppThread();
-        var manager = global::nq<global::bau>.bsfi;
-        return manager == null || manager.Pointer == IntPtr.Zero ? null : manager;
+        return GetSingletonManager<global::bau>();
     }
 
     private static global::bas GetDataManager()
     {
-        AttachIl2CppThread();
-        var manager = global::nq<global::bas>.bsfi;
-        return manager == null || manager.Pointer == IntPtr.Zero ? null : manager;
+        return GetSingletonManager<global::bas>();
     }
 
     private static global::TaskbarHero.Manager.LocalInventoryManager GetLocalInventoryManager()
     {
-        AttachIl2CppThread();
-        try
-        {
-            var manager = global::TaskbarHero.Manager.LocalInventoryManager.bszh;
-            return manager == null || manager.Pointer == IntPtr.Zero ? null : manager;
-        }
-        catch (Exception ex)
-        {
-            Plugin.FileLog("LocalInventoryManager lookup failed: " + ex.Message);
-            return null;
-        }
+        return GetSingletonManager<global::TaskbarHero.Manager.LocalInventoryManager>();
     }
 
     private static global::TaskbarHero.Manager.PetManager GetPetManager()
     {
-        AttachIl2CppThread();
-        var manager = global::nq<global::TaskbarHero.Manager.PetManager>.bsfi;
-        return manager == null || manager.Pointer == IntPtr.Zero ? null : manager;
+        return GetSingletonManager<global::TaskbarHero.Manager.PetManager>();
     }
 
     private static global::TaskbarHero.StageManager GetStageManager()
     {
-        AttachIl2CppThread();
-        var manager = global::nq<global::TaskbarHero.StageManager>.bsfi;
-        return manager == null || manager.Pointer == IntPtr.Zero ? null : manager;
+        return GetSingletonManager<global::TaskbarHero.StageManager>();
     }
 
     private static global::TaskbarHero.Data.ItemInfoData GetItemInfo(int itemKey)
@@ -8349,46 +8517,44 @@ internal sealed class ModActions
             return null;
         }
 
+        return TryInvokeInstanceObjectByReturn<global::TaskbarHero.Data.ItemInfoData>(
+            data,
+            new object[] { itemKey },
+            "mgs", "jpk", "bhs", "jhr", "jcr", "mjq", "gxm", "jno", "gvd");
+    }
+
+    private static T GetSingletonManager<T>()
+        where T : global::UnityEngine.MonoBehaviour
+    {
+        AttachIl2CppThread();
         try
         {
-            var item = data.mgm(itemKey);
-            if (item != null && item.Pointer != IntPtr.Zero)
+            Type singletonType = typeof(global::nq<>).MakeGenericType(typeof(T));
+            foreach (string member in new[] { "bsfs", "bsfi", "bcpd" })
             {
-                return item;
-            }
-        }
-        catch (Exception ex)
-        {
-            Plugin.FileLog($"mgl item lookup failed for {itemKey}: {ex.Message}");
-        }
-
-        try
-        {
-            var item = data.gvd(itemKey);
-            if (item != null && item.Pointer != IntPtr.Zero)
-            {
-                return item;
-            }
-        }
-        catch (Exception ex)
-        {
-            Plugin.FileLog($"gvd item lookup failed for {itemKey}: {ex.Message}");
-        }
-
-        foreach (string name in new[] { "mjq", "gxm", "jno" })
-        {
-            try
-            {
-                var item = TryInvokeInstanceObject<global::TaskbarHero.Data.ItemInfoData>(data, name, itemKey);
-                if (item != null && item.Pointer != IntPtr.Zero)
+                var manager = ReadStaticMember(singletonType, member) as T;
+                if (IsValid(manager))
                 {
-                    return item;
+                    return manager;
                 }
             }
-            catch (Exception ex)
+        }
+        catch (Exception ex)
+        {
+            Plugin.FileLog($"{typeof(T).Name} nq singleton lookup failed: {ex.Message}");
+        }
+
+        try
+        {
+            var manager = global::UnityEngine.Object.FindObjectOfType<T>();
+            if (IsValid(manager))
             {
-                Plugin.FileLog($"{name} item lookup failed for {itemKey}: {ex.Message}");
+                return manager;
             }
+        }
+        catch (Exception ex)
+        {
+            Plugin.FileLog($"{typeof(T).Name} scene singleton lookup failed: {ex.Message}");
         }
 
         return null;
@@ -8571,7 +8737,17 @@ internal sealed class ModActions
 
         try
         {
-            return InvokeInstanceMethod(manager, "mii") as global::TaskbarHero.PlayerSaveData;
+            var direct = ReadObjectMemberFlexible(manager, "btdq", "bgms", "PlayerSaveData", "playerSaveData") as global::TaskbarHero.PlayerSaveData;
+            if (IsValid(direct))
+            {
+                return direct;
+            }
+
+            var reflected = TryInvokeInstanceObjectByReturn<global::TaskbarHero.PlayerSaveData>(
+                manager,
+                Array.Empty<object>(),
+                "mip", "mii");
+            return IsValid(reflected) ? reflected : null;
         }
         catch (Exception ex)
         {
