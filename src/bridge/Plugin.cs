@@ -23,7 +23,7 @@ public sealed class Plugin : BasePlugin
 {
     public const string PluginGuid = "xoker.taskbarhero.modmenu";
     public const string PluginName = "TaskbarHero Trainer Bridge";
-    public const string PluginVersion = "1.8.6";
+    public const string PluginVersion = "1.8.7";
     public const string PipeName = "TaskbarHeroTrainerPipe";
     private static readonly bool EnableRuntimeHarmonyPatches = false;
     internal static readonly bool EnableForcedSaveRequests = false;

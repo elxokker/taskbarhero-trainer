@@ -1,4 +1,4 @@
-# TaskbarHero Trainer 1.8.6 - instalacion y uso
+# TaskbarHero Trainer 1.8.7 - instalacion y uso
 
 Esta release incluye el trainer externo, el bridge BepInEx IL2CPP y el payload
 necesario para instalarlo en TaskbarHero.
@@ -6,7 +6,7 @@ necesario para instalarlo en TaskbarHero.
 ## Instalacion
 
 1. Cierra TaskbarHero.
-2. Extrae `TaskbarHeroTrainer-v1.8.6.zip` en una carpeta cualquiera.
+2. Extrae `TaskbarHeroTrainer-v1.8.7.zip` en una carpeta cualquiera.
 3. Abre PowerShell en esa carpeta.
 4. Ejecuta:
 
@@ -23,8 +23,8 @@ El instalador:
   la version esperada;
 - si Steam actualizo `GameAssembly.dll`, mueve interop/cache antiguos para que
   BepInEx los regenere en el siguiente arranque;
-- deja Doorstop en `enabled = false` para que abrir el juego normal desde Steam
-  no cargue el trainer;
+- deja Doorstop en `enabled = true` para que abrir el juego normal desde Steam
+  cargue el bridge y mantenga heroes/stash;
 - abre `TaskbarHeroTrainer.exe` al terminar.
 
 Si Steam esta en otra ruta:
@@ -33,15 +33,13 @@ Si Steam esta en otra ruta:
 powershell -ExecutionPolicy Bypass -File .\install_taskbarhero_trainer.ps1 -GameDir "D:\SteamLibrary\steamapps\common\TaskbarHero"
 ```
 
-## Abrir con trainer
+## Abrir
 
-1. Abre `TaskbarHeroTrainer.exe`.
-2. Pulsa `Launch game`.
-3. Espera a que el juego cargue.
-4. Pulsa `Refresh runtime` si el bridge aun no aparece como conectado.
+Puedes abrir TaskbarHero directamente desde Steam. El bridge queda cargado sin
+abrir el trainer.
 
-`Launch game` activa el bridge solo para ese arranque. Si abres TaskbarHero
-directamente desde Steam, el juego queda normal.
+Para usar botones manuales, abre `TaskbarHeroTrainer.exe`, espera a que detecte
+el proceso y pulsa `Refresh runtime` si el bridge aun no aparece conectado.
 
 ## Botones
 

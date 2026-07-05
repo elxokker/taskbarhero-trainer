@@ -266,7 +266,7 @@ Reset-InteropIfStale $GameDir $gameAssemblyDll $interopDll
 if (Test-Path $doorstopConfig) {
     $text = Get-Content -LiteralPath $doorstopConfig -Raw
     if ($text -match "enabled\s*=") {
-        $text = $text -replace "enabled\s*=\s*(true|false)", "enabled = false"
+        $text = $text -replace "enabled\s*=\s*(true|false)", "enabled = true"
         Set-Content -LiteralPath $doorstopConfig -Value $text -Encoding ASCII
     }
 

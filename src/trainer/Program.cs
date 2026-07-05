@@ -20,7 +20,7 @@ internal static class Program
 
 internal sealed class TrainerForm : Form
 {
-    private const string TrainerVersion = "1.8.6";
+    private const string TrainerVersion = "1.8.7";
     private const string GameProcessName = "TaskBarHero";
     private const string PipeName = "TaskbarHeroTrainerPipe";
     private const int PipeTimeoutMs = 700;
@@ -470,7 +470,7 @@ internal sealed class TrainerForm : Form
             }
             else
             {
-                _bridgeLabel.Text = "Bridge: inactivo";
+                _bridgeLabel.Text = "Bridge: inactivo; abre el juego desde Steam";
                 DisarmTrainerLaunch();
             }
 
@@ -487,7 +487,7 @@ internal sealed class TrainerForm : Form
         DisarmTrainerLaunch();
         string response = TrySendCommand("PING", 250);
         _bridgeReady = response.StartsWith("Bridge listo", StringComparison.OrdinalIgnoreCase);
-        _bridgeLabel.Text = _bridgeReady ? "Bridge: conectado" : "Bridge: no activo; abre el juego con Steam o Launch game";
+        _bridgeLabel.Text = _bridgeReady ? "Bridge: conectado" : "Bridge: no activo; revisa Doorstop o reinicia el juego";
 
         SetActionButtons(_bridgeReady);
     }
@@ -707,7 +707,7 @@ internal sealed class TrainerForm : Form
                 FileName = "steam://rungameid/3678970",
                 UseShellExecute = true
             });
-            SetStatus("Lanzando TaskbarHero desde Steam con trainer activado...");
+            SetStatus("Lanzando TaskbarHero desde Steam con bridge persistente activado...");
         }
         catch (Exception ex)
         {
@@ -719,7 +719,7 @@ internal sealed class TrainerForm : Form
     private void ConfigureNormalLaunchDefaults()
     {
         TrySetBepInExConsoleEnabled(false, out _);
-        TrySetDoorstopEnabled(false, out _);
+        TrySetDoorstopEnabled(true, out _);
     }
 
     private void DisarmTrainerLaunch()
@@ -730,7 +730,6 @@ internal sealed class TrainerForm : Form
         }
 
         _doorstopArmedForTrainerLaunch = false;
-        TrySetDoorstopEnabled(false, out _);
     }
 
     private static bool TrySetDoorstopEnabled(bool enabled, out string error)

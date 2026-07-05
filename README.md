@@ -3,15 +3,15 @@
 Trainer externo para **TaskbarHero** con bridge BepInEx IL2CPP. No usa hotkeys:
 todo se activa desde la ventana del trainer.
 
-![TaskbarHero Trainer 1.8.6](docs/taskbarhero-trainer-v1.7.png)
+![TaskbarHero Trainer 1.8.7](docs/taskbarhero-trainer-v1.7.png)
 
 ## Version actual
 
-**TaskbarHero Trainer 1.8.6**
+**TaskbarHero Trainer 1.8.7**
 
 Descarga recomendada:
 
-- [TaskbarHeroTrainer-v1.8.6.zip](https://github.com/elxokker/taskbarhero-trainer/releases/latest)
+- [TaskbarHeroTrainer-v1.8.7.zip](https://github.com/elxokker/taskbarhero-trainer/releases/latest)
 
 ## Que incluye
 
@@ -45,14 +45,14 @@ powershell -ExecutionPolicy Bypass -File .\install_taskbarhero_trainer.ps1
 ```
 
 El instalador copia BepInEx IL2CPP, el bridge y el trainer. Tambien deja
-Doorstop desactivado por defecto para que abrir el juego normal desde Steam no
-cargue el trainer.
+Doorstop activado para que abrir el juego directamente desde Steam cargue el
+bridge y mantenga heroes/stash.
 
 ## Uso normal
 
-Abre `TaskbarHeroTrainer.exe` y pulsa `Launch game`. Ese boton activa el bridge
-solo para ese arranque, abre el juego desde Steam y vuelve a dejar Doorstop
-apagado despues.
+Puedes abrir TaskbarHero directamente desde Steam. El bridge queda cargado sin
+necesidad de abrir el trainer. Abre `TaskbarHeroTrainer.exe` solo cuando quieras
+usar botones manuales como monedas, gear, gemas o velocidad.
 
 ## Actualizar desde una version vieja
 

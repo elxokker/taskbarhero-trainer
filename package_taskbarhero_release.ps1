@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "1.8.6",
+    [string]$Version = "1.8.7",
     [string]$GameDir = "C:\Program Files (x86)\Steam\steamapps\common\TaskbarHero",
     [string]$BepInExTemplate = "C:\Users\xoker\Tools\BepInEx-UnityIL2CPP-x64-6.0.0-be.785",
     [string]$Unity6InteropPatch = "C:\Users\xoker\Tools\Il2CppInterop-Unity6-1.0.0\release",
@@ -80,7 +80,7 @@ Copy-Item -LiteralPath (Join-Path $Unity6InteropPatch "*") `
 
 $payloadDoorstop = Join-Path $payloadRoot "doorstop_config.ini"
 $text = Get-Content -LiteralPath $payloadDoorstop -Raw
-$text = $text -replace "enabled\s*=\s*(true|false)", "enabled = false"
+$text = $text -replace "enabled\s*=\s*(true|false)", "enabled = true"
 $text = $text -replace "debug_enabled\s*=\s*true", "debug_enabled = false"
 Set-Content -LiteralPath $payloadDoorstop -Value $text -Encoding ASCII
 
